@@ -19,7 +19,7 @@ pub fn knob(ui: &mut Ui, value: &mut f32, default: f32, label: &str, display: &s
     const H: f32 = 66.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(W, H), Sense::click_and_drag());
     let mut changed = false;
-    if response.dragged() {
+    if response.dragged_by(egui::PointerButton::Primary) {
         let fine = ui.input(|i| i.modifiers.shift);
         let delta = response.drag_delta().y * if fine { -0.001 } else { -0.005 };
         if delta != 0.0 {
@@ -31,7 +31,7 @@ pub fn knob(ui: &mut Ui, value: &mut f32, default: f32, label: &str, display: &s
         *value = default;
         changed = true;
     }
-    let active = response.hovered() || response.dragged();
+    let active = response.hovered() || response.dragged_by(egui::PointerButton::Primary);
     if active {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
     }
@@ -56,8 +56,8 @@ pub fn knob(ui: &mut Ui, value: &mut f32, default: f32, label: &str, display: &s
         if active { TEXT } else { TEXT_3 },
     );
     KnobOutput {
-        started: response.drag_started() || response.double_clicked(),
-        finished: response.drag_stopped() || response.double_clicked(),
+        started: response.drag_started_by(egui::PointerButton::Primary) || response.double_clicked(),
+        finished: response.drag_stopped_by(egui::PointerButton::Primary) || response.double_clicked(),
         changed,
         response,
     }
@@ -126,7 +126,7 @@ pub fn fader(ui: &mut Ui, db: &mut f32, size: Vec2) -> FaderOutput {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     let vertical = size.y > size.x;
     let mut changed = false;
-    if response.dragged() {
+    if response.dragged_by(egui::PointerButton::Primary) {
         if let Some(p) = response.interact_pointer_pos() {
             let norm = if vertical { 1.0 - (p.y - rect.top()) / rect.height() } else { (p.x - rect.left()) / rect.width() };
             *db = fader_db(norm.clamp(0.0, 1.0));
@@ -139,7 +139,7 @@ pub fn fader(ui: &mut Ui, db: &mut f32, size: Vec2) -> FaderOutput {
     }
     let norm = fader_norm(*db);
     let painter = ui.painter();
-    let active = response.hovered() || response.dragged();
+    let active = response.hovered() || response.dragged_by(egui::PointerButton::Primary);
     let cap_color = if active { TEXT } else { TEXT_2 };
     if vertical {
         painter.rect_filled(Rect::from_center_size(rect.center(), egui::vec2(2.0, rect.height())), egui::CornerRadius::same(1), BASE);
@@ -157,8 +157,8 @@ pub fn fader(ui: &mut Ui, db: &mut f32, size: Vec2) -> FaderOutput {
         painter.circle_filled(egui::pos2(x, rect.center().y), if active { 5.0 } else { 4.0 }, cap_color);
     }
     FaderOutput {
-        started: response.drag_started() || response.double_clicked(),
-        finished: response.drag_stopped() || response.double_clicked(),
+        started: response.drag_started_by(egui::PointerButton::Primary) || response.double_clicked(),
+        finished: response.drag_stopped_by(egui::PointerButton::Primary) || response.double_clicked(),
         changed,
         response,
     }

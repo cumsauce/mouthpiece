@@ -35,7 +35,7 @@ cargo test -p mp-export --test sentence_e2e -- --ignored --nocapture
 - `mp-model`: the project and its edits. No audio, no UI.
 - `mp-dsp`: signal processing.
 - `mp-engine`: the real-time graph and offline render, which share one code path.
-- `mp-analysis`: decoding, tempo, key, Whisper, alignment, search.
+- `mp-analysis`: decoding, tempo, key, Whisper, alignment, search, and the stem splitting worker (`assets/separate.py`).
 - `mp-export`: MP3, WAV and video through ffmpeg.
 - `mp-vfx`: GPU picture effects. Preview and video render share it, so effects must be stateless.
 - `mp-app`: the interface. `ds/` is the design system, `panels/` the screens, `actions.rs` the commands.

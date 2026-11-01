@@ -9,6 +9,7 @@ pub mod peaks;
 pub mod search;
 pub mod sentence;
 pub mod spectrogram;
+pub mod stems;
 pub mod tempo;
 pub mod transcribe;
 pub mod video;

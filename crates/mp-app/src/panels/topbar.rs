@@ -39,6 +39,7 @@ impl App {
                 (Action::SaveAs, "Save as…", "⇧⌘S"),
                 (Action::Import, "Add audio files…", "⌘I"),
                 (Action::Export, "Render…", "⇧⌘R"),
+                (Action::AudioSettings, "Audio settings…", "⌘,"),
             ] {
                 if menu_item(ui, name, Some(key)).clicked() {
                     self.run(action);

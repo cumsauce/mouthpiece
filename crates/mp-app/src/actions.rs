@@ -58,6 +58,8 @@ pub enum Action {
     ShowPicture,
     LargePicture,
     RenameTrack,
+    AudioSettings,
+    SplitStems,
     ZoomIn,
     ZoomOut,
     ZoomFit,
@@ -173,12 +175,14 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::Shortcuts, "Keyboard shortcuts", key(NONE, Key::Questionmark), "View"),
     (Action::New, "New project", key(CMD, Key::N), "File"),
     (Action::Open, "Open project", key(CMD, Key::O), "File"),
+    (Action::AudioSettings, "Audio settings", key(CMD, Key::Comma), "File"),
     (Action::Save, "Save", key(CMD, Key::S), "File"),
     (Action::SaveAs, "Save as", key(CMD_SHIFT, Key::S), "File"),
     (Action::Import, "Import audio files", key(CMD, Key::I), "File"),
     (Action::Export, "Render to MP3, WAV or MP4", key(CMD_SHIFT, Key::R), "File"),
     (Action::AddTrack, "Add track", key(CMD, Key::T), "Track"),
     (Action::AddVocalTrack, "Add Sentence track", None, "Track"),
+    (Action::SplitStems, "Split into stems", None, "Track"),
     (Action::RenameTrack, "Rename track", key(CMD, Key::R), "Track"),
     (Action::DeleteTrack, "Delete track", key(CMD, Key::Backspace), "Track"),
     (Action::AddEq, "Add EQ", None, "Device"),
@@ -394,6 +398,8 @@ impl App {
                 self.show_tab(BottomTab::Devices);
             }
             Action::LargePicture => self.picture.large = !self.picture.large,
+            Action::AudioSettings => self.open_audio_settings(),
+            Action::SplitStems => self.split_selected(),
             Action::RenameTrack => {
                 if let Some(track) = self.selected_track.and_then(|t| self.project.track(t)) {
                     self.rename_track = Some((track.id, track.name.clone(), false));

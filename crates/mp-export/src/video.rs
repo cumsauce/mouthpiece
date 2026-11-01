@@ -62,7 +62,7 @@ pub fn export_video(
 ) -> Result<bool, String> {
     let ffmpeg = ffmpeg_path().ok_or("ffmpeg isn't installed")?;
     let segments: Vec<VideoSegment> = project.video_edit_list(range.0, range.1, settings.fps);
-    let sources: HashMap<SourceId, PathBuf> = project.sources.iter().map(|s| (s.id, s.path.clone())).collect();
+    let sources: HashMap<SourceId, PathBuf> = project.sources.iter().map(|s| (s.id, s.picture_path.clone().unwrap_or_else(|| s.path.clone()))).collect();
     let total: u64 = segments.iter().map(|s| s.frames).sum();
 
     let mut renderer = if project.has_picture_effects() {

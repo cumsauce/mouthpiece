@@ -356,7 +356,7 @@ impl Widget for ValueField<'_> {
                 ui.data_mut(|d| d.insert_temp(edit_id, text));
             }
         } else {
-            if response.dragged() {
+            if response.dragged_by(egui::PointerButton::Primary) {
                 let fine = ui.input(|i| i.modifiers.shift);
                 let dx = response.drag_delta().x as f64 / width as f64 * if fine { 0.1 } else { 1.0 };
                 if dx != 0.0 {
@@ -371,7 +371,7 @@ impl Widget for ValueField<'_> {
                 let start = format!("{:.*}", self.decimals, *self.value);
                 ui.data_mut(|d| d.insert_temp(edit_id, start));
             }
-            let hover = ui.ctx().animate_bool_with_time(response.id, self.enabled && (response.hovered() || response.dragged()), MOTION_HOVER);
+            let hover = ui.ctx().animate_bool_with_time(response.id, self.enabled && (response.hovered() || response.dragged_by(egui::PointerButton::Primary)), MOTION_HOVER);
             ui.painter().rect_filled(rect, R_S, mix(CONTROL, mix(CONTROL, CONTROL_HOVER, 0.5), hover));
             let norm = self.to_norm(*self.value).clamp(0.0, 1.0) as f32;
             let (a, b) = if self.bipolar { (norm.min(0.5), norm.max(0.5)) } else { (0.0, norm) };
@@ -384,7 +384,7 @@ impl Widget for ValueField<'_> {
             ui.painter().text(rect.left_center() + egui::vec2(SP_2, 0.0), Align2::LEFT_CENTER, self.label, font_caption(), color);
             let text = format!("{:.*}{}", self.decimals, *self.value, self.unit);
             ui.painter().text(rect.right_center() - egui::vec2(SP_2, 0.0), Align2::RIGHT_CENTER, text, font_num(11.0), if self.enabled { TEXT } else { TEXT_3 });
-            if self.enabled && (response.hovered() || response.dragged()) {
+            if self.enabled && (response.hovered() || response.dragged_by(egui::PointerButton::Primary)) {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
             }
         }

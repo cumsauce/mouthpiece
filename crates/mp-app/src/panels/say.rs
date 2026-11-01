@@ -183,11 +183,14 @@ impl App {
 
     /// What's happening with the words, and the one thing to do about it if there's a problem.
     fn say_status(&mut self, ui: &mut Ui) {
-        if let Some((label, fraction)) = self.jobs.active.iter().find(|j| j.label.starts_with("Transcribing") || j.label.starts_with("Downloading")).map(|j| (j.label.clone(), j.fraction)) {
+        if let Some((label, fraction)) = self.jobs.active.iter().find(|j| j.label.starts_with("Transcribing") || j.label.starts_with("Downloading") || j.label.starts_with("Splitting")).map(|j| (j.label.clone(), j.fraction)) {
             ui.label(caption(format!("{label}…")));
             progress(ui, fraction, ui.available_width());
             ui.add_space(SP_2);
             return;
+        }
+        if let Some(source) = self.split_offer() {
+            self.split_offer_card(ui, source);
         }
         let needs_model = !MODELS.iter().any(|m| m.is_installed());
         let has_vocal = self.project.sources.iter().any(|s| s.kind == TrackKind::Vocal);
@@ -501,7 +504,7 @@ impl App {
         if response.double_clicked() {
             self.place_saved_word(word);
         }
-        if response.drag_started() {
+        if response.drag_started_by(egui::PointerButton::Primary) {
             self.word_drag = Some(word);
         }
     }
@@ -650,7 +653,7 @@ impl App {
         if response.double_clicked() {
             self.place_hit_at_playhead(hit);
         }
-        if response.drag_started() {
+        if response.drag_started_by(egui::PointerButton::Primary) {
             self.hit_drag = Some(hit.clone());
         }
     }
@@ -927,7 +930,7 @@ impl App {
             } else if response.clicked() {
                 self.select_word(source, i, ui.input(|input| input.modifiers.shift));
                 self.audition_hit(&hit_at(i));
-            } else if response.drag_started() {
+            } else if response.drag_started_by(egui::PointerButton::Primary) {
                 self.hit_drag = Some(hit_at(i));
             }
         }

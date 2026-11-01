@@ -129,8 +129,10 @@ impl App {
             ui.ctx().set_cursor_icon(if d.zone == Zone::Body { CursorIcon::Grabbing } else { d.zone.cursor() });
         }
 
+        crate::panels::timeline::middle_drag_nav(ui, &mut self.arr_view, &response);
+
         // Press and drag.
-        if response.drag_started() {
+        if response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
                 if let Some((clip, zone, track)) = self.clip_at(&lanes, origin, alt) {
                     self.selected_track = Some(self.project.tracks[track].id);
@@ -148,7 +150,7 @@ impl App {
                 }
             }
         }
-        if response.dragged() {
+        if response.dragged_by(egui::PointerButton::Primary) {
             if let Some(p) = response.interact_pointer_pos() {
                 if self.clip_drag.is_some() {
                     let track = self.track_index_at(&lanes, p.y);
@@ -168,7 +170,7 @@ impl App {
                 }
             }
         }
-        if response.drag_stopped() {
+        if response.drag_stopped_by(egui::PointerButton::Primary) {
             if self.clip_drag.is_some() {
                 self.end_clip_drag();
             }
@@ -496,10 +498,10 @@ impl App {
         let id = self.project.tracks[index].id;
         let grip = Rect::from_min_max(egui::pos2(row.left(), row.bottom() - 3.0), egui::pos2(lanes_area.left(), row.bottom() + 2.0));
         let resize = ui.interact(grip, ui.scope_id().with(("resize", id.0)), Sense::drag());
-        if resize.hovered() || resize.dragged() {
+        if resize.hovered() || resize.dragged_by(egui::PointerButton::Primary) {
             ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
         }
-        if resize.dragged() {
+        if resize.dragged_by(egui::PointerButton::Primary) {
             if let Some(t) = self.project.track_mut(id) {
                 t.height = (t.height + resize.drag_delta().y).clamp(MIN_TRACK_H, MAX_TRACK_H);
             }
@@ -521,6 +523,12 @@ impl App {
             self.selected_track = Some(track);
             self.selection.clear();
             self.slice_selection_to_words();
+            ui.close();
+        }
+        if menu_item(ui, "Split into stems…", None).clicked() {
+            self.selected_track = Some(track);
+            self.selection.clear();
+            self.run(crate::actions::Action::SplitStems);
             ui.close();
         }
         menu_separator(ui);
@@ -562,10 +570,11 @@ impl App {
         let color = if self.project.loop_region.enabled { ACCENT } else { CONTROL_HOVER };
         ui.painter().with_clip_rect(ruler).rect_filled(loop_band, 0.0, color);
 
-        if shift && response.drag_started() {
+        crate::panels::timeline::middle_drag_nav(ui, &mut self.arr_view, &response);
+        if shift && response.drag_started_by(egui::PointerButton::Primary) {
             self.begin_gesture("Set loop");
         }
-        if response.dragged() {
+        if response.dragged_by(egui::PointerButton::Primary) {
             if let Some(p) = response.interact_pointer_pos() {
                 if shift {
                     if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
@@ -582,7 +591,7 @@ impl App {
                 }
             }
         }
-        if response.drag_stopped() {
+        if response.drag_stopped_by(egui::PointerButton::Primary) {
             self.snap_line = None;
             self.end_gesture();
         }
@@ -625,7 +634,7 @@ impl App {
         ui.painter().line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())], Stroke::new(1.0, ACCENT));
 
         let response = ui.interact(rect, ui.scope_id().with("overview"), Sense::click_and_drag());
-        if response.clicked() || response.dragged() {
+        if response.clicked() || response.dragged_by(egui::PointerButton::Primary) {
             if let Some(p) = response.interact_pointer_pos() {
                 let span = self.arr_view.right_time() - self.arr_view.scroll;
                 let t = (p.x - rect.left()) as f64 / rect.width() as f64 * end;
@@ -635,8 +644,8 @@ impl App {
     }
 
     fn empty_state(&mut self, ui: &mut Ui, area: Rect) {
-        let text = "Vocals transcribe themselves, and tempo and key are detected.";
-        if hero_state(ui, area, "Drop your stems here", text, "Choose files…").clicked() {
+        let text = "A whole song can be split into stems for you. Vocals transcribe themselves, and tempo and key are detected.";
+        if hero_state(ui, area, "Drop a song or its stems here", text, "Choose files…").clicked() {
             self.import_dialog();
         }
     }

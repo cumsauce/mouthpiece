@@ -175,6 +175,10 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
         }
         "resize" => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(numbers[0], numbers[1]))),
         "seek" => app.seek(numbers[0] as f64),
+        "audio_rate" => {
+            let config = mp_engine::AudioConfig { sample_rate: Some(numbers[0] as u32), ..app.engine.config.clone() };
+            app.apply_audio(config);
+        }
         "recipe" => app.add_recipe_number(usizes[0]),
         "range" => app.editor.range = Some((numbers[0] as f64, numbers[1] as f64)),
         "import" => app.import_path(rest.into()),
@@ -213,6 +217,15 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
                 push(app, vec![pointer(button, pos, true, m)], m);
                 push(app, vec![pointer(button, pos, false, m)], m);
             }
+        }
+        "mdrag" => {
+            let (from, to) = (egui::pos2(numbers[0], numbers[1]), egui::pos2(numbers[2], numbers[3]));
+            let m = Modifiers::NONE;
+            push(app, vec![Event::PointerMoved(from)], m);
+            push(app, vec![pointer(PointerButton::Middle, from, true, m)], m);
+            push(app, vec![Event::PointerMoved(from.lerp(to, 0.5))], m);
+            push(app, vec![Event::PointerMoved(to)], m);
+            push(app, vec![pointer(PointerButton::Middle, to, false, m)], m);
         }
         "drag" | "altdrag" | "shiftdrag" | "cmddrag" => {
             let m = match command {

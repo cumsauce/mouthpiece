@@ -8,7 +8,7 @@ use mp_analysis::video::{PROXY_HEIGHT, PROXY_WIDTH};
 use mp_model::SourceId;
 use std::sync::atomic::Ordering;
 
-const INSTALL: &str = if cfg!(target_os = "macos") {
+pub const FFMPEG_INSTALL: &str = if cfg!(target_os = "macos") {
     "brew install ffmpeg"
 } else if cfg!(windows) {
     "winget install ffmpeg"
@@ -41,9 +41,9 @@ impl App {
                 ui.label(caption("Your edits will then cut the video by themselves. Sound works without it."));
                 ui.add_space(SP_1);
                 ui.horizontal(|ui| {
-                    keycap(ui, INSTALL);
+                    keycap(ui, FFMPEG_INSTALL);
                     if ui.add(Button::secondary("Copy").small()).clicked() {
-                        ui.ctx().copy_text(INSTALL.to_string());
+                        ui.ctx().copy_text(FFMPEG_INSTALL.to_string());
                     }
                 });
             });

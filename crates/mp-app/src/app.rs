@@ -24,6 +24,23 @@ pub const FILE_EXTENSION: &str = "mouthpiece";
 const AUTOSAVE_SECONDS: u64 = 30;
 const RENDER_CACHE_LIMIT: usize = 1 << 31;
 
+/// Watches which output the system is using, because asking can take a moment and an idle UI wouldn't ask.
+fn watch_system_output(ctx: egui::Context) -> Arc<parking_lot::Mutex<Option<String>>> {
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+    let current = Arc::new(parking_lot::Mutex::new(mp_engine::system_output_name(None)));
+    let shared = current.clone();
+    let _ = std::thread::Builder::new().name("audio-watch".into()).spawn(move || loop {
+        std::thread::sleep(EVERY);
+        let name = mp_engine::system_output_name(None);
+        let mut held = shared.lock();
+        if *held != name {
+            *held = name;
+            ctx.request_repaint();
+        }
+    });
+    current
+}
+
 pub struct SourceRuntime {
     pub peaks: Arc<Peaks>,
     pub mono: Arc<Vec<f32>>,
@@ -122,6 +139,11 @@ pub struct App {
     pub video_frame: Option<(SourceId, usize)>,
     pub show_video: bool,
     pub picture: crate::panels::picture::PictureState,
+    pub settings: crate::settings::Settings,
+    pub audio_panel: Option<crate::panels::setup::AudioPanel>,
+    pub stems: crate::panels::setup::StemsState,
+    /// The output the system is using, kept up to date from another thread.
+    pub system_output: Arc<parking_lot::Mutex<Option<String>>>,
     pub render_state: Option<eframe::egui_wgpu::RenderState>,
     /// Whether Delete means the selected track: true after clicking its header, until anything else is clicked.
     pub track_focus: bool,
@@ -159,7 +181,7 @@ pub struct App {
     /// Track index to level, decayed slowly so meters read smoothly.
     pub meter_hold: HashMap<usize, [f32; 2]>,
     pub master_hold: [f32; 2],
-    tempo_priority: u8,
+    pub tempo_priority: u8,
     /// Shown once a batch of imports is done, so a later stem's better tempo isn't announced twice.
     tempo_toast: Option<String>,
     pub tempo_user_set: bool,
@@ -173,7 +195,10 @@ pub struct App {
 
 impl App {
     pub fn new(ctx: egui::Context, args: Vec<PathBuf>) -> Self {
-        let engine = AudioEngine::start();
+        let settings = crate::settings::Settings::load();
+        let wake_ctx = ctx.clone();
+        let engine = AudioEngine::start(settings.audio.clone(), Arc::new(move || wake_ctx.request_repaint()));
+        let system_output = watch_system_output(ctx.clone());
         let sample_rate = engine.sample_rate;
         let project = Project::default();
         let installed = MODELS.iter().position(|m| m.is_installed());
@@ -218,6 +243,10 @@ impl App {
             video_frame: None,
             show_video: true,
             picture: Default::default(),
+            settings,
+            audio_panel: None,
+            stems: Default::default(),
+            system_output,
             render_state: None,
             track_focus: false,
             rename_track: None,
@@ -799,6 +828,7 @@ impl App {
 
     pub fn frame_start(&mut self) {
         self.process_jobs();
+        self.watch_audio_device();
         if !self.selection.is_empty() {
             self.track_focus = false;
         }
@@ -853,6 +883,7 @@ impl App {
         while let Some(event) = self.jobs.next_event() {
             match event {
                 JobEvent::Progress { job, fraction } => self.jobs.set_progress(job, fraction),
+                JobEvent::Label { job, label } => self.jobs.set_label(job, label),
                 JobEvent::Done { job } => self.jobs.finish(job),
                 JobEvent::Imported(imported) => self.on_imported(*imported),
                 JobEvent::ImportFailed { path, error } => {
@@ -899,6 +930,9 @@ impl App {
                     self.toast_with(ToastKind::Good, text, ToastAction::Reveal(path));
                 }
                 JobEvent::ExportFailed { error } => self.toast(ToastKind::Bad, format!("Render failed: {error}")),
+                JobEvent::StemsInstalled => self.on_stems_installed(),
+                JobEvent::StemsReady { source, files } => self.finish_stems(source, files),
+                JobEvent::StemsFailed { source, error } => self.on_stems_failed(source, error),
             }
         }
     }
@@ -907,7 +941,8 @@ impl App {
         let crate::jobs::Imported { path, audio, mono, peaks, tempo, key, existing } = imported;
         let duration = audio.frames() as f64 / self.sample_rate as f64;
         let name = file_stem(&path);
-        let is_video = mp_analysis::video::is_video_path(&path);
+        let picture = self.stems.pending_picture.remove(&path);
+        let is_video = mp_analysis::video::is_video_path(&path) || picture.is_some();
         // Unless its name says otherwise, a video is people talking, so it should get transcribed.
         let kind = match TrackKind::from_filename(&name) {
             TrackKind::Music if is_video => TrackKind::Vocal,
@@ -921,14 +956,16 @@ impl App {
                 let source = p.add_source(path.clone(), name.clone(), duration, kind);
                 if let Some(s) = p.sources.iter_mut().find(|s| s.id == source) {
                     s.has_video = is_video;
+                    s.picture_path = picture.clone();
                 }
                 let track = p.add_track(name.clone(), kind);
                 p.add_clip(track, source, 0.0, 0.0, duration);
                 source
             }),
         };
-        if is_video && mp_model::video::ffmpeg_path().is_some() {
-            self.jobs.video_proxy(source, path.clone());
+        let picture_file = self.project.source(source).and_then(|s| s.picture_path.clone());
+        if (is_video || picture_file.is_some()) && mp_model::video::ffmpeg_path().is_some() {
+            self.jobs.video_proxy(source, picture_file.unwrap_or_else(|| path.clone()));
         }
         self.bank.buffers.insert(source, audio);
         self.runtime.insert(source, SourceRuntime { peaks, mono });

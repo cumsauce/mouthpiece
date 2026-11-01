@@ -103,6 +103,9 @@ pub struct Source {
     /// Whether this file also has a picture.
     #[serde(default)]
     pub has_video: bool,
+    /// Where the picture comes from when it isn't `path`, as for a stem split from a video.
+    #[serde(default)]
+    pub picture_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

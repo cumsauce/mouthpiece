@@ -44,7 +44,7 @@ impl Project {
 
     pub fn add_source(&mut self, path: PathBuf, name: String, duration: Seconds, kind: TrackKind) -> SourceId {
         let id = SourceId(self.alloc_id());
-        self.sources.push(Source { id, path, name, duration, bpm: None, kind, has_video: false });
+        self.sources.push(Source { id, path, name, duration, bpm: None, kind, has_video: false, picture_path: None });
         id
     }
 

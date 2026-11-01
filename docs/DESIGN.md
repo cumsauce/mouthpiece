@@ -299,6 +299,11 @@ Each of these was a real bug. They're easy to repeat.
 3. Add a `case` to `effect` in `mp-vfx/src/shader.wgsl`. Use only the time and parameters, never state from an earlier
    frame: preview scrubs and render jumps, and both have to give the same frame.
 
+**Handle a mouse drag**
+Use `dragged_by(egui::PointerButton::Primary)`, and the same for `drag_started_by` and `drag_stopped_by`. egui's plain
+`dragged()` is true for every button, which is how a middle-button drag once moved clips. Timelines also call
+`timeline::middle_drag_nav`.
+
 ## Checking your work
 
 Run these in order. Tests alone can't tell you whether something looks right.

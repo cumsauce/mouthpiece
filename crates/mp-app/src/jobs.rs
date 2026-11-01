@@ -12,8 +12,9 @@ use mp_dsp::Stereo;
 use mp_engine::{GraphCompiler, RenderCache, SourceBank};
 use mp_export::video::{LevelSource, VideoSettings};
 use mp_export::{ExportSettings, Format};
+use mp_analysis::stems::{self, Installer, StemError, StemJob, StemSettings, StemWorker};
 use mp_model::{Project, SourceId};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -43,6 +44,11 @@ pub enum JobEvent {
     DownloadFailed { error: String },
     Exported { path: PathBuf, seconds: f64 },
     ExportFailed { error: String },
+    Label { job: u64, label: String },
+    StemsInstalled,
+    StemsReady { source: SourceId, files: BTreeMap<String, PathBuf> },
+    /// `source` is none if it was the install that failed.
+    StemsFailed { source: Option<SourceId>, error: StemError },
 }
 
 pub struct ActiveJob {
@@ -90,6 +96,7 @@ pub struct Jobs {
     project: u64,
     pub active: Vec<ActiveJob>,
     transcribe_queue: Sender<TranscribeJob>,
+    stem_queue: Sender<StemRequest>,
 }
 
 impl Jobs {
@@ -102,7 +109,9 @@ impl Jobs {
                 run_transcribe(job);
             }
         });
-        Self { tx, rx, ctx, next_id: 1, project: 0, active: Vec::new(), transcribe_queue }
+        let (stem_queue, stem_jobs) = unbounded::<StemRequest>();
+        let _ = std::thread::Builder::new().name("stems".into()).spawn(move || run_stems(stem_jobs));
+        Self { tx, rx, ctx, next_id: 1, project: 0, active: Vec::new(), transcribe_queue, stem_queue }
     }
 
     /// Next event that still applies.
@@ -136,6 +145,25 @@ impl Jobs {
         let cancel = Arc::new(AtomicBool::new(false));
         self.active.push(ActiveJob { id, label, fraction: None, cancel: cancel.clone(), outlives_project });
         (id, cancel)
+    }
+
+    /// Sets up the separation software, in the background.
+    pub fn install_stems(&mut self, installer: Installer) {
+        let (job, cancel) = self.register("Downloading stem splitter".to_string(), true);
+        let reporter = self.reporter(ANY_PROJECT);
+        std::thread::spawn(move || {
+            reporter.send(match stems::install(&installer, &cancel) {
+                Ok(()) => JobEvent::StemsInstalled,
+                Err(error) => JobEvent::StemsFailed { source: None, error },
+            });
+            reporter.send(JobEvent::Done { job });
+        });
+    }
+
+    pub fn split_stems(&mut self, source: SourceId, name: &str, input: PathBuf, settings: StemSettings, low_memory: bool) {
+        let (job, cancel) = self.register(format!("Splitting {name}"), false);
+        let reporter = self.reporter(self.project);
+        let _ = self.stem_queue.send(StemRequest { job, source, name: name.to_string(), cancel, reporter, stem_job: StemJob { input, settings, low_memory, ffmpeg: mp_model::video::find_ffmpeg() } });
     }
 
     pub fn import(&mut self, path: PathBuf, sample_rate: u32, existing: Option<SourceId>) {
@@ -250,6 +278,12 @@ impl Jobs {
         });
     }
 
+    pub fn set_label(&mut self, job: u64, label: String) {
+        if let Some(j) = self.active.iter_mut().find(|j| j.id == job) {
+            j.label = label;
+        }
+    }
+
     pub fn set_progress(&mut self, job: u64, fraction: f32) {
         if let Some(j) = self.active.iter_mut().find(|j| j.id == job) {
             j.fraction = Some(fraction);
@@ -287,6 +321,68 @@ fn export_video(
     })();
     let _ = std::fs::remove_file(&audio);
     result
+}
+
+struct StemRequest {
+    job: u64,
+    source: SourceId,
+    name: String,
+    cancel: Arc<AtomicBool>,
+    reporter: Reporter,
+    stem_job: StemJob,
+}
+
+/// Runs splits one at a time. The worker holds the models in memory, which saves loading them for the
+/// next song, but a DAW needs that memory more than an idle splitter does, so it goes after a while.
+fn run_stems(queue: Receiver<StemRequest>) {
+    const KEEP_MODELS_FOR: std::time::Duration = std::time::Duration::from_secs(300);
+    let mut worker: Option<(StemWorker, StemSettings)> = None;
+    loop {
+        let request = match queue.recv_timeout(KEEP_MODELS_FOR) {
+            Ok(request) => request,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                worker = None;
+                continue;
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
+        };
+        let StemRequest { job, source, name, cancel, reporter, stem_job } = request;
+        let settings = stem_job.settings.clone();
+        if worker.as_ref().is_some_and(|(_, s)| s.model_dir() != settings.model_dir()) {
+            worker = None;
+        }
+        let mut running = None;
+        let result = match worker.take() {
+            Some(pair) => Ok(pair.0),
+            None => StemWorker::start(&settings, &cancel),
+        }
+        .and_then(|mut w| {
+            let label = format!("Splitting {name} on {}", device_label(&w.device));
+            let result = w.separate(&stem_job, &cancel, &mut |fraction, stage| {
+                reporter.send(JobEvent::Progress { job, fraction });
+                reporter.send(JobEvent::Label { job, label: format!("{label}: {stage}") });
+            });
+            running = Some(w);
+            result
+        });
+        // Cancelling kills the process, and so does running out of memory on some systems.
+        if !matches!(result, Err(StemError::Cancelled)) {
+            worker = running.map(|w| (w, settings));
+        }
+        reporter.send(match result {
+            Ok(files) => JobEvent::StemsReady { source, files },
+            Err(error) => JobEvent::StemsFailed { source: Some(source), error },
+        });
+        reporter.send(JobEvent::Done { job });
+    }
+}
+
+fn device_label(device: &str) -> &'static str {
+    match device {
+        "cuda" => "the GPU",
+        "mps" => "the Apple GPU",
+        _ => "the CPU",
+    }
 }
 
 fn run_transcribe(job: TranscribeJob) {

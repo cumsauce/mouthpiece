@@ -12,6 +12,8 @@ impl App {
         self.discard_modal(ctx);
         self.word_modal(ctx);
         self.rename_track_modal(ctx);
+        self.audio_modal(ctx);
+        self.split_modal(ctx);
         if self.palette_open {
             self.palette(ctx);
         }

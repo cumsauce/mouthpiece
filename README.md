@@ -34,6 +34,15 @@ Where this README says `⌘`, use Ctrl on Linux.
 **Windows (x86_64, a CPU with AVX2).** Unzip it and run `mouthpiece.exe`. It isn't signed, so SmartScreen may ask
 you to confirm the first time. Where this README says `⌘`, use Ctrl.
 
+## Splitting a song into stems
+
+Drop in a whole song and Mouthpiece offers to split it into vocals, drums, bass and other. It uses
+[audio-separator](https://github.com/nomadkaraoke/python-audio-separator): a RoFormer vocal model first, then `htdemucs_ft`
+on what's left. This is Python, so the first split sets up a private environment and downloads several gigabytes. It
+needs [uv](https://docs.astral.sh/uv/) or Python 3.10 to 3.13, and ffmpeg, and the app says how to get any that are missing.
+Stems go in a `<song> stems` folder beside the song, along with `Instrumental`. Preferences are in `settings.json` in the app's
+data folder, including the model names.
+
 ## Build from source
 
 Needs Rust and CMake (`brew install cmake`). The first build compiles whisper.cpp and LAME, which takes a few minutes. On Linux, the packages to install are listed in

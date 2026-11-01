@@ -16,5 +16,5 @@ pub use compile::{GraphCompiler, SourceBank};
 pub use core::{render_offline, EngineCore};
 pub use device::{Curve, Device, ParamInfo, ProcessContext, Unit};
 pub use graph::{EngineGraph, Voice};
-pub use output::{AudioEngine, Shared, MAX_METERS};
+pub use output::{list_hosts, list_outputs, system_output_name, AudioConfig, AudioEngine, OutputInfo, Shared, MAX_METERS};
 pub use render_cache::RenderCache;

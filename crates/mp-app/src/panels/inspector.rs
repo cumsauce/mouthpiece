@@ -257,7 +257,7 @@ impl App {
         let has_words = self.index.word_count() > 0;
         let has_line = self.project.tracks.iter().any(|t| t.name == "Sentence" && !t.clips.is_empty());
         let steps = [
-            (has_stems, "Drop your stems in"),
+            (has_stems, "Drop in a song or its stems"),
             (has_words, "Let the vocal transcribe"),
             (has_line, "Say something"),
             (false, "Render it"),

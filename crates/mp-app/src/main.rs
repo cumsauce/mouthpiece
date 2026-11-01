@@ -12,6 +12,7 @@ mod ds;
 mod jobs;
 mod panels;
 mod script;
+mod settings;
 mod shell;
 
 use eframe::egui;

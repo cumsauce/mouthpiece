@@ -19,14 +19,18 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 
 ### 1. Get a song ready to cut
 
-> When I have stems, I want to get to typing words as soon as possible, so I can start on the idea
-> while I still have it.
+> When I have stems, or only the song, I want to get to typing words as soon as possible, so I can start
+> on the idea while I still have it.
 
 - **Done when:** stems are on tracks, tempo and key are right, and the words are searchable.
 - **Budget:** one drag, plus one click the first time to get a speech model. No configuration.
 - **Needs:** visible progress on the vocal itself, not hidden in a status bar. Tracks sorted and coloured
   by type. Typing is possible as soon as there are words, and it's clear why it isn't before then.
-- **Failure to avoid:** a dead end. "Can't transcribe" must be followed by the one button that fixes it.
+- **Only have the song?** Drop it in. A project of one song offers **Split into stems** right where the next
+  step would be, before any words are looked for. It carries on in the background, uses the stems already made if
+  there are any, replaces the untouched song's track, and a video's picture stays on the vocal.
+- **Failure to avoid:** a dead end. "Can't transcribe" must be followed by the one button that fixes it, and "needs
+  uv" by the command to install it and a way to check again.
 
 ### 2. Make them say a line (the core job)
 
@@ -189,6 +193,9 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 | Hearing the line alone meant finding the track and clicking S | **Solo the selection's track** with one key, and play from the selection with another |
 | After placing a line, focus stayed in the input, where Space types a space | A vocabulary of every word as tags was overwhelming and rarely useful | Removed. Say shows **recent lines** and points to the lyrics |
 | Panel controls beside the tabs read as more tabs | **The tab row holds only tabs.** Devices has a left rail, and the Editor's toggles sit at the far right |
+| Getting stems meant leaving for another program first | **Split into stems** in the app, offered when a whole song arrives |
+| Dragging with any mouse button edited clips | Only the left button edits. **The middle button zooms and scrolls**, as in Bitwig |
+| The output was whatever the system chose at launch | **Audio settings** (⌘,): output, sample rate, block size, channels, applied live and remembered |
 | In an empty input, **Space plays the line** just placed and stopping returns to where the next one goes |
 
 ## Keyboard map for the core loop
@@ -224,6 +231,12 @@ Esc puts everything back.
 | ⌘E | | Split at the playhead |
 | Delete | | Delete the selection, or the track whose header was just clicked |
 | ⇧← ⇧→ | | Nudge by a bar |
+
+## Mouse
+
+Middle-drag anywhere on a timeline: up and down zoom around where the drag began, and side to side scrolls. Bitwig's guide
+describes this as its zoom mode on the ruler, and says middle-drag works anywhere in the arranger without giving the axes, so
+the mapping is carried over from the ruler. Left-drag on the ruler still scrubs here.
 
 ## Hotkeys and Bitwig
 

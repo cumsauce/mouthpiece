@@ -469,8 +469,9 @@ impl App {
         let x = view.x(self.playhead);
         painter.line_segment([egui::pos2(x, lane.top()), egui::pos2(x, lane.bottom())], Stroke::new(1.0, ACCENT));
 
+        crate::panels::timeline::middle_drag_nav(ui, &mut self.arr_view, &response);
         let cmd = ui.input(|i| i.modifiers.command);
-        if response.drag_started() {
+        if response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(i) = ui.input(|i| i.pointer.press_origin()).and_then(key_at) {
                 self.picture.selected_key = Some(i);
                 self.begin_gesture("Move keyframe");
@@ -478,7 +479,7 @@ impl App {
                 self.picture.selected_key = None;
             }
         }
-        if response.dragged() {
+        if response.dragged_by(egui::PointerButton::Primary) {
             if let (Some(i), Some(p)) = (self.picture.selected_key, response.interact_pointer_pos()) {
                 let t = self.snap_time(view.t(p.x), &view, &[], cmd);
                 self.snap_line = None;
@@ -656,15 +657,15 @@ impl App {
         let grip = Rect::from_center_size(corner, egui::vec2(12.0, 12.0));
         let handle = ui.interact(grip, ui.scope_id().with("picture-grip"), Sense::drag());
         painter.rect_filled(Rect::from_center_size(corner, egui::vec2(8.0, 8.0)), 1.0, TEXT);
-        if handle.hovered() || handle.dragged() {
+        if handle.hovered() || handle.dragged_by(egui::PointerButton::Primary) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
-        } else if body.hovered() || body.dragged() {
+        } else if body.hovered() || body.dragged_by(egui::PointerButton::Primary) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
-        if body.drag_started() || handle.drag_started() {
+        if body.drag_started_by(egui::PointerButton::Primary) || handle.drag_started_by(egui::PointerButton::Primary) {
             self.begin_gesture("Move on the picture");
         }
-        if body.dragged() {
+        if body.dragged_by(egui::PointerButton::Primary) {
             let d = body.drag_delta();
             let (du, dv) = (d.x / size.x, d.y / size.y);
             if effect.area {
@@ -678,7 +679,7 @@ impl App {
                 self.set_picture_value(id, 1, value(1) - dv * 2.0);
             }
         }
-        if handle.dragged() {
+        if handle.dragged_by(egui::PointerButton::Primary) {
             if let Some(p) = handle.interact_pointer_pos() {
                 let offset = p - centre;
                 if effect.area {

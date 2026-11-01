@@ -2,6 +2,7 @@
 
 use crate::app::App;
 use crate::ds::*;
+use crate::panels::arranger::truncate;
 use eframe::egui::{self, Ui};
 
 impl App {
@@ -14,6 +15,11 @@ impl App {
                 let color = if load > 0.8 { BAD } else if load > 0.5 { WARN } else { TEXT_3 };
                 ui.label(num(format!("{:.0}%", load * 100.0)).color(color));
                 ui.label(micro("DSP"));
+                let device = format!("{} · {:.1} kHz", truncate(&self.engine.device_name, 28), self.sample_rate as f32 / 1000.0);
+                let tip_text = self.engine.problem.clone().unwrap_or_else(|| "Audio settings".to_string());
+                if ui.add(Button::ghost(&device).small().active(self.engine.problem.is_some()).tip(&tip_text, Some("⌘,"))).clicked() {
+                    self.run(crate::actions::Action::AudioSettings);
+                }
                 let jobs: Vec<(u64, String, Option<f32>)> = self.jobs.active.iter().map(|j| (j.id, j.label.clone(), j.fraction)).collect();
                 for (id, label, fraction) in jobs {
                     if ui.add(IconButton::new(Icon::Close, "Cancel").size(14.0)).clicked() {

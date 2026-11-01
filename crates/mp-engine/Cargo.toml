@@ -9,5 +9,6 @@ mp-model.workspace = true
 mp-dsp.workspace = true
 rtrb.workspace = true
 parking_lot.workspace = true
+serde.workspace = true
 crossbeam-channel.workspace = true
 cpal = "0.18"

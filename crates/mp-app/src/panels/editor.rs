@@ -236,7 +236,8 @@ impl App {
         draw_grid(&ui.painter_at(wave), wave, &self.project, &view);
         draw_ruler(ui.painter(), ruler, &self.project, &view);
         let ruler_response = ui.interact(ruler, ui.scope_id().with("ed-ruler"), Sense::click_and_drag());
-        if ruler_response.clicked() || ruler_response.dragged() {
+        crate::panels::timeline::middle_drag_nav(ui, &mut self.editor.view, &ruler_response);
+        if ruler_response.clicked() || ruler_response.dragged_by(egui::PointerButton::Primary) {
             if let Some(p) = ruler_response.interact_pointer_pos() {
                 self.seek(view.t(p.x));
             }
@@ -283,7 +284,8 @@ impl App {
                 self.hint = zone.hint().to_string();
             }
         }
-        if response.drag_started() {
+        crate::panels::timeline::middle_drag_nav(ui, &mut self.editor.view, &response);
+        if response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
                 match zone_at(origin, alt) {
                     Some((clip, zone)) if zone != Zone::Body => {
@@ -303,7 +305,7 @@ impl App {
                 }
             }
         }
-        if response.dragged() {
+        if response.dragged_by(egui::PointerButton::Primary) {
             if let Some(p) = response.interact_pointer_pos() {
                 if self.clip_drag.is_some() {
                     self.update_clip_drag(view.t(p.x), None, &view, cmd);
@@ -313,7 +315,7 @@ impl App {
                 }
             }
         }
-        if response.drag_stopped() {
+        if response.drag_stopped_by(egui::PointerButton::Primary) {
             if self.clip_drag.is_some() {
                 self.end_clip_drag();
             }
@@ -485,7 +487,8 @@ impl App {
         if response.double_clicked() {
             double = response.interact_pointer_pos().and_then(|p| chip_at(p.x)).map(|c| c.hit.clone());
         }
-        if response.drag_started() {
+        crate::panels::timeline::middle_drag_nav(ui, &mut self.editor.view, &response);
+        if response.drag_started_by(egui::PointerButton::Primary) {
             if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
                 self.hit_drag = chip_at(origin.x).map(|c| c.hit.clone());
             }

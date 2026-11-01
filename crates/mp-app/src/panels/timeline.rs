@@ -58,6 +58,25 @@ impl TimeView {
     }
 }
 
+/// Middle-button navigation, as in Bitwig's zoom mode: up and down zoom around where the drag began,
+/// and side to side scrolls. Returns whether it's happening.
+pub fn middle_drag_nav(ui: &egui::Ui, view: &mut TimeView, response: &egui::Response) -> bool {
+    const ZOOM_PER_PX: f64 = 0.01;
+    if !response.dragged_by(egui::PointerButton::Middle) {
+        return false;
+    }
+    let delta = response.drag_delta();
+    let anchor = ui.input(|i| i.pointer.press_origin()).map_or(view.left, |p| p.x);
+    if delta.y != 0.0 {
+        view.zoom_at((-delta.y as f64 * ZOOM_PER_PX).exp(), anchor);
+    }
+    if delta.x != 0.0 {
+        view.pan(-delta.x);
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::AllScroll);
+    true
+}
+
 /// Picks grid spacing in beats, so lines stay at least `min_px` apart.
 pub fn adaptive_step(project: &Project, view: &TimeView, min_px: f64) -> f64 {
     let beat_px = project.beat_seconds() * view.px_per_s;

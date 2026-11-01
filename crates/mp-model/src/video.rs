@@ -12,16 +12,18 @@ pub const HOLD_SECONDS: Seconds = 0.5;
 /// get the shell's PATH, so the usual install locations are checked as well.
 pub fn ffmpeg_path() -> Option<PathBuf> {
     static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
-    PATH.get_or_init(|| {
-        if let Some(path) = std::env::var_os("MOUTHPIECE_FFMPEG") {
-            return Some(PathBuf::from(path));
-        }
-        let from_env = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
-        let usual = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(PathBuf::from);
-        let binary = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-        from_env.into_iter().chain(usual).map(|dir| dir.join(binary)).find(|p| p.is_file())
-    })
-    .clone()
+    PATH.get_or_init(find_ffmpeg).clone()
+}
+
+/// Looks again, for when someone may have just installed it.
+pub fn find_ffmpeg() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("MOUTHPIECE_FFMPEG") {
+        return Some(PathBuf::from(path));
+    }
+    let from_env = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
+    let usual = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(PathBuf::from);
+    let binary = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    from_env.into_iter().chain(usual).map(|dir| dir.join(binary)).find(|p| p.is_file())
 }
 
 impl Project {

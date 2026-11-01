@@ -22,3 +22,6 @@ whisper-rs = { version = "0.16", features = ["metal"], optional = true }
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = { version = "0.16", optional = true }
 
+
+[dev-dependencies]
+hound = "3"

@@ -13,6 +13,7 @@ pub mod palette;
 pub mod render;
 pub mod say;
 pub mod selection_bar;
+pub mod setup;
 pub mod statusbar;
 pub mod timeline;
 pub mod topbar;
