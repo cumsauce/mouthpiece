@@ -2,6 +2,7 @@
 //! It has no Rust equivalent, so it runs as a long-lived worker process in a private Python environment,
 //! which is created on first use. Models stay loaded between jobs, and the worker goes when it's idle.
 
+use crate::tools::{self, hide_console, Tool};
 use crate::transcribe::app_data_dir;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -108,72 +109,26 @@ fn marker() -> PathBuf {
     stems_home().join("installed")
 }
 
-/// Finds a program, including the usual places a GUI app's PATH leaves out.
-fn which(name: &str) -> Option<PathBuf> {
-    let binary = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
-    let usual = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(PathBuf::from);
-    let from_env = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
-    let in_home = home.iter().flat_map(|h| [h.join(".local/bin"), h.join(".cargo/bin")]).collect::<Vec<_>>();
-    from_env.into_iter().chain(usual).chain(in_home).map(|dir| dir.join(&binary)).find(|p| p.is_file())
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Installer {
-    Uv(PathBuf),
-    Python(PathBuf),
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Setup {
     Ready,
-    NeedsInstall(Installer),
-    /// Neither uv nor a suitable Python is on this computer.
-    NothingToInstallWith,
+    /// The first split has to download the separation software.
+    NeedsInstall,
 }
 
-/// audio-separator's dependencies don't support the newest Pythons right away.
-fn python_is_suitable(path: &Path) -> bool {
-    let Ok(output) = Command::new(path).arg("--version").output() else { return false };
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut parts = text.split_whitespace().nth(1).unwrap_or("").split('.');
-    let (major, minor) = (parts.next().and_then(|p| p.parse::<u32>().ok()), parts.next().and_then(|p| p.parse::<u32>().ok()));
-    major == Some(3) && minor.is_some_and(|m| (10..=13).contains(&m))
-}
-
-fn find_installer() -> Option<Installer> {
-    if let Some(uv) = which("uv") {
-        return Some(Installer::Uv(uv));
-    }
-    ["python3.12", "python3.11", "python3.10", "python3.13", "python3", "python"].iter().filter_map(|n| which(n)).find(|p| python_is_suitable(p)).map(Installer::Python)
-}
-
-/// Whether splitting can run now, and if not, what it would take.
+/// Whether splitting can run now.
 pub fn setup() -> Setup {
-    if std::env::var_os("MOUTHPIECE_STEMS_PYTHON").is_some() || (marker().is_file() && venv_python().is_file()) {
-        return Setup::Ready;
-    }
-    find_installer().map_or(Setup::NothingToInstallWith, Setup::NeedsInstall)
+    let installed = marker().is_file() && venv_python().is_file() && tools::locate(Tool::Ffmpeg).is_some();
+    if std::env::var_os("MOUTHPIECE_STEMS_PYTHON").is_some() || installed { Setup::Ready } else { Setup::NeedsInstall }
 }
 
 fn package() -> &'static str {
     // On Apple Silicon the cpu build is the one that uses the GPU, through MPS.
-    if !cfg!(target_os = "macos") && which("nvidia-smi").is_some() {
+    if !cfg!(target_os = "macos") && tools::which("nvidia-smi").is_some() {
         "audio-separator[gpu]"
     } else {
         "audio-separator[cpu]"
     }
-}
-
-fn hide_console(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    #[cfg(not(windows))]
-    let _ = command;
 }
 
 /// Runs to the end, or kills it on cancel. Returns what it last said on an error.
@@ -203,30 +158,24 @@ fn run_step(mut command: Command, cancel: &AtomicBool) -> Result<(), StemError> 
     }
 }
 
-/// Creates the private Python environment. This downloads several gigabytes.
-pub fn install(installer: &Installer, cancel: &AtomicBool) -> Result<(), StemError> {
+/// Gets everything splitting needs, including uv and ffmpeg if they aren't here. This downloads several gigabytes.
+pub fn install(cancel: &AtomicBool, on_progress: &mut dyn FnMut(&str, f32)) -> Result<(), StemError> {
+    let failed = |e: String| if e == "cancelled" { StemError::Cancelled } else { StemError::Other(e) };
+    tools::ensure(&[Tool::Ffmpeg, Tool::Uv], cancel, on_progress).map_err(failed)?;
+    if marker().is_file() && venv_python().is_file() {
+        return Ok(());
+    }
+    let uv = tools::locate(Tool::Uv).ok_or_else(|| StemError::Other("uv isn't installed".to_string()))?;
     let venv = stems_home().join("venv");
     std::fs::create_dir_all(stems_home()).map_err(|e| StemError::Other(e.to_string()))?;
-    let python = venv_python();
     let spec = package();
-    match installer {
-        Installer::Uv(uv) => {
-            let mut make = Command::new(uv);
-            make.args(["venv", "--clear", "--python", PYTHON_FOR_UV]).arg(&venv);
-            run_step(make, cancel)?;
-            let mut add = Command::new(uv);
-            add.args(["pip", "install", "--python"]).arg(&python).arg(spec);
-            run_step(add, cancel)?;
-        }
-        Installer::Python(base) => {
-            let mut make = Command::new(base);
-            make.args(["-m", "venv", "--clear"]).arg(&venv);
-            run_step(make, cancel)?;
-            let mut add = Command::new(&python);
-            add.args(["-m", "pip", "install", spec]);
-            run_step(add, cancel)?;
-        }
-    }
+    on_progress("Getting the stem splitter", 0.0);
+    let mut make = Command::new(&uv);
+    make.args(["venv", "--clear", "--python", PYTHON_FOR_UV]).arg(&venv);
+    run_step(make, cancel)?;
+    let mut add = Command::new(&uv);
+    add.args(["pip", "install", "--python"]).arg(venv_python()).arg(spec);
+    run_step(add, cancel)?;
     std::fs::write(marker(), spec).map_err(|e| StemError::Other(e.to_string()))
 }
 

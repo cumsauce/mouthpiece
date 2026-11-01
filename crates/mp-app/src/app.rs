@@ -142,6 +142,7 @@ pub struct App {
     pub settings: crate::settings::Settings,
     pub audio_panel: Option<crate::panels::setup::AudioPanel>,
     pub stems: crate::panels::setup::StemsState,
+    pub find: crate::panels::find_song::FindSong,
     /// The output the system is using, kept up to date from another thread.
     pub system_output: Arc<parking_lot::Mutex<Option<String>>>,
     pub render_state: Option<eframe::egui_wgpu::RenderState>,
@@ -195,6 +196,7 @@ pub struct App {
 
 impl App {
     pub fn new(ctx: egui::Context, args: Vec<PathBuf>) -> Self {
+        mp_analysis::tools::init();
         let settings = crate::settings::Settings::load();
         let wake_ctx = ctx.clone();
         let engine = AudioEngine::start(settings.audio.clone(), Arc::new(move || wake_ctx.request_repaint()));
@@ -246,6 +248,7 @@ impl App {
             settings,
             audio_panel: None,
             stems: Default::default(),
+            find: Default::default(),
             system_output,
             render_state: None,
             track_focus: false,
@@ -931,6 +934,15 @@ impl App {
                 }
                 JobEvent::ExportFailed { error } => self.toast(ToastKind::Bad, format!("Render failed: {error}")),
                 JobEvent::StemsInstalled => self.on_stems_installed(),
+                JobEvent::SongResults { job, results } => self.on_song_results(job, results),
+                JobEvent::SongDownloaded { path, split } => self.on_song_downloaded(path, split),
+                JobEvent::SongFailed { error } => self.on_song_failed(error),
+                JobEvent::ToolsFailed { error } => {
+                    if error != "cancelled" {
+                        self.toast(ToastKind::Bad, format!("Couldn't get ffmpeg: {error}"));
+                    }
+                }
+                JobEvent::FfmpegReady => self.on_ffmpeg_ready(),
                 JobEvent::StemsReady { source, files } => self.finish_stems(source, files),
                 JobEvent::StemsFailed { source, error } => self.on_stems_failed(source, error),
             }
@@ -1007,7 +1019,16 @@ impl App {
         } else if existing.is_some() {
             self.load_cached_transcript(source);
         }
+        self.split_if_asked(&path, source);
         self.say.dirty = true;
+    }
+
+    /// Now that video can be read, shows the picture of everything that has one.
+    fn on_ffmpeg_ready(&mut self) {
+        let waiting: Vec<_> = self.project.sources.iter().filter(|s| s.has_video && !self.video.contains_key(&s.id)).map(|s| (s.id, s.picture_path.clone().unwrap_or_else(|| s.path.clone()))).collect();
+        for (source, path) in waiting {
+            self.jobs.video_proxy(source, path);
+        }
     }
 
     /// Pitch of the audio a clip plays, in Hz, remembered for the most recent clip.

@@ -4,6 +4,7 @@ pub mod arranger;
 pub mod changes;
 pub mod devices;
 pub mod editor;
+pub mod find_song;
 pub mod inspector;
 pub mod lane;
 pub mod mixer;

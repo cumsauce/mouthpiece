@@ -92,14 +92,18 @@ pub fn empty_state(ui: &mut Ui, rect: Rect, title: &str, text: &str, action: Opt
 }
 
 /// The empty state for the whole workspace, used once: before anything has been added.
-pub fn hero_state(ui: &mut Ui, rect: Rect, title: &str, text: &str, action: &str) -> Response {
+pub fn hero_state(ui: &mut Ui, rect: Rect, title: &str, text: &str, action: &str, other: &str) -> (Response, Response) {
     let c = rect.center() - egui::vec2(0.0, 28.0);
     let painter = ui.painter_at(rect);
     painter.text(c, Align2::CENTER_CENTER, title, font_display(), TEXT);
     painter.text(c + egui::vec2(0.0, 28.0), Align2::CENTER_CENTER, text, font_body(), TEXT_3);
     let galley = painter.layout_no_wrap(action.to_string(), font_label(), TEXT);
-    let at = Rect::from_center_size(c + egui::vec2(0.0, 66.0), egui::vec2(galley.size().x + 20.0, CONTROL_H));
-    ui.put(at, Button::primary(action))
+    let other_galley = painter.layout_no_wrap(other.to_string(), font_label(), TEXT);
+    let (width, other_width) = (galley.size().x + 20.0, other_galley.size().x + 20.0);
+    let left = c.x - (width + SP_2 + other_width) * 0.5;
+    let at = Rect::from_min_size(egui::pos2(left, c.y + 66.0 - CONTROL_H * 0.5), egui::vec2(width, CONTROL_H));
+    let other_at = Rect::from_min_size(egui::pos2(at.right() + SP_2, at.top()), egui::vec2(other_width, CONTROL_H));
+    (ui.put(at, Button::primary(action)), ui.put(other_at, Button::secondary(other)))
 }
 
 /// A keycap followed by what it does.

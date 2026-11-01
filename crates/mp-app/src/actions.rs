@@ -60,6 +60,8 @@ pub enum Action {
     RenameTrack,
     AudioSettings,
     SplitStems,
+    FindSong,
+    UpdateYtDlp,
     ZoomIn,
     ZoomOut,
     ZoomFit,
@@ -175,6 +177,8 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::Shortcuts, "Keyboard shortcuts", key(NONE, Key::Questionmark), "View"),
     (Action::New, "New project", key(CMD, Key::N), "File"),
     (Action::Open, "Open project", key(CMD, Key::O), "File"),
+    (Action::FindSong, "Find a song online", key(CMD_SHIFT, Key::F), "File"),
+    (Action::UpdateYtDlp, "Update yt-dlp now", None, "File"),
     (Action::AudioSettings, "Audio settings", key(CMD, Key::Comma), "File"),
     (Action::Save, "Save", key(CMD, Key::S), "File"),
     (Action::SaveAs, "Save as", key(CMD_SHIFT, Key::S), "File"),
@@ -399,6 +403,8 @@ impl App {
             }
             Action::LargePicture => self.picture.large = !self.picture.large,
             Action::AudioSettings => self.open_audio_settings(),
+            Action::FindSong => self.open_find_song(),
+            Action::UpdateYtDlp => self.jobs.update_yt_dlp(),
             Action::SplitStems => self.split_selected(),
             Action::RenameTrack => {
                 if let Some(track) = self.selected_track.and_then(|t| self.project.track(t)) {

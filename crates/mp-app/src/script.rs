@@ -175,6 +175,11 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
         }
         "resize" => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(numbers[0], numbers[1]))),
         "seek" => app.seek(numbers[0] as f64),
+        "find" => {
+            app.open_find_song();
+            app.find.query = rest.to_string();
+            app.search_now();
+        }
         "audio_rate" => {
             let config = mp_engine::AudioConfig { sample_rate: Some(numbers[0] as u32), ..app.engine.config.clone() };
             app.apply_audio(config);

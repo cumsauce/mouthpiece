@@ -38,6 +38,7 @@ impl App {
                 (Action::Save, "Save", "⌘S"),
                 (Action::SaveAs, "Save as…", "⇧⌘S"),
                 (Action::Import, "Add audio files…", "⌘I"),
+                (Action::FindSong, "Find a song online…", "⇧⌘F"),
                 (Action::Export, "Render…", "⇧⌘R"),
                 (Action::AudioSettings, "Audio settings…", "⌘,"),
             ] {

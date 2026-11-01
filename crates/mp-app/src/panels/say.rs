@@ -948,6 +948,9 @@ impl App {
         if ui.add(Button::secondary("Add files…").icon(Icon::Plus).fill_width().tip("Add audio or video files", Some("⌘I"))).clicked() {
             self.import_dialog();
         }
+        if ui.add(Button::secondary("Find a song online…").icon(Icon::Search).fill_width().tip("Search for a song or paste a link", Some("⇧⌘F"))).clicked() {
+            self.run(crate::actions::Action::FindSong);
+        }
         ui.add_space(SP_2);
         egui::ScrollArea::vertical().id_salt("sources").auto_shrink(false).show(ui, |ui| {
             let sources = self.project.sources.clone();

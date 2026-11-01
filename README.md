@@ -38,10 +38,23 @@ you to confirm the first time. Where this README says `⌘`, use Ctrl.
 
 Drop in a whole song and Mouthpiece offers to split it into vocals, drums, bass and other. It uses
 [audio-separator](https://github.com/nomadkaraoke/python-audio-separator): a RoFormer vocal model first, then `htdemucs_ft`
-on what's left. This is Python, so the first split sets up a private environment and downloads several gigabytes. It
-needs [uv](https://docs.astral.sh/uv/) or Python 3.10 to 3.13, and ffmpeg, and the app says how to get any that are missing.
+on what's left. This is Python, so the first split sets up a private environment and downloads several gigabytes.
 Stems go in a `<song> stems` folder beside the song, along with `Instrumental`. Preferences are in `settings.json` in the app's
 data folder, including the model names.
+
+## Tools it fetches for itself
+
+Nothing needs installing by hand. On first need, these go into a `tools` folder in the app's data folder:
+
+| Tool | For | From |
+|---|---|---|
+| ffmpeg, ffprobe | Video, and downloads | [martin-riedl.de](https://ffmpeg.martin-riedl.de) on macOS and Linux, [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) on Windows |
+| yt-dlp | Find a song online | [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases) |
+| Deno | yt-dlp needs a JavaScript runtime for YouTube | [Deno releases](https://github.com/denoland/deno/releases) |
+| uv | Sets up Python for stem splitting | [uv releases](https://github.com/astral-sh/uv/releases) |
+
+yt-dlp updates separately from the app, to its nightly build: at most daily when it's used, again if a search or download fails,
+and on demand with **Update yt-dlp now** in the command palette. An ffmpeg or uv already on your system is used instead of downloading one.
 
 ## Build from source
 

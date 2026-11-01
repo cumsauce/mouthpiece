@@ -12,7 +12,9 @@ use mp_dsp::Stereo;
 use mp_engine::{GraphCompiler, RenderCache, SourceBank};
 use mp_export::video::{LevelSource, VideoSettings};
 use mp_export::{ExportSettings, Format};
-use mp_analysis::stems::{self, Installer, StemError, StemJob, StemSettings, StemWorker};
+use mp_analysis::online::{self, DownloadKind, SongResult};
+use mp_analysis::stems::{self, StemError, StemJob, StemSettings, StemWorker};
+use mp_analysis::tools::{self, Tool};
 use mp_model::{Project, SourceId};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -45,6 +47,11 @@ pub enum JobEvent {
     Exported { path: PathBuf, seconds: f64 },
     ExportFailed { error: String },
     Label { job: u64, label: String },
+    SongResults { job: u64, results: Result<Vec<mp_analysis::online::SongResult>, String> },
+    SongDownloaded { path: PathBuf, split: bool },
+    SongFailed { error: String },
+    ToolsFailed { error: String },
+    FfmpegReady,
     StemsInstalled,
     StemsReady { source: SourceId, files: BTreeMap<String, PathBuf> },
     /// `source` is none if it was the install that failed.
@@ -97,6 +104,7 @@ pub struct Jobs {
     pub active: Vec<ActiveJob>,
     transcribe_queue: Sender<TranscribeJob>,
     stem_queue: Sender<StemRequest>,
+    online_queue: Sender<Box<dyn FnOnce() + Send>>,
 }
 
 impl Jobs {
@@ -111,7 +119,10 @@ impl Jobs {
         });
         let (stem_queue, stem_jobs) = unbounded::<StemRequest>();
         let _ = std::thread::Builder::new().name("stems".into()).spawn(move || run_stems(stem_jobs));
-        Self { tx, rx, ctx, next_id: 1, project: 0, active: Vec::new(), transcribe_queue, stem_queue }
+        // One at a time, because yt-dlp replaces itself when it updates.
+        let (online_queue, online_jobs) = unbounded::<Box<dyn FnOnce() + Send>>();
+        let _ = std::thread::Builder::new().name("online".into()).spawn(move || online_jobs.iter().for_each(|task| task()));
+        Self { tx, rx, ctx, next_id: 1, project: 0, active: Vec::new(), transcribe_queue, stem_queue, online_queue }
     }
 
     /// Next event that still applies.
@@ -148,16 +159,76 @@ impl Jobs {
     }
 
     /// Sets up the separation software, in the background.
-    pub fn install_stems(&mut self, installer: Installer) {
+    pub fn install_stems(&mut self) {
         let (job, cancel) = self.register("Downloading stem splitter".to_string(), true);
         let reporter = self.reporter(ANY_PROJECT);
         std::thread::spawn(move || {
-            reporter.send(match stems::install(&installer, &cancel) {
+            let result = stems::install(&cancel, &mut |label, fraction| {
+                reporter.send(JobEvent::Label { job, label: format!("Downloading: {label}") });
+                reporter.send(JobEvent::Progress { job, fraction });
+            });
+            reporter.send(match result {
                 Ok(()) => JobEvent::StemsInstalled,
                 Err(error) => JobEvent::StemsFailed { source: None, error },
             });
             reporter.send(JobEvent::Done { job });
         });
+    }
+
+    pub fn update_yt_dlp(&mut self) {
+        let (job, cancel) = self.register("Updating yt-dlp".to_string(), true);
+        let reporter = self.reporter(ANY_PROJECT);
+        let _ = self.online_queue.send(Box::new(move || {
+            let result = tools::ensure(&[Tool::YtDlp], &cancel, &mut |_, _| {}).and_then(|()| online::update(true, &cancel));
+            if let Err(error) = result {
+                reporter.send(JobEvent::SongFailed { error });
+            }
+            reporter.send(JobEvent::Done { job });
+        }));
+    }
+
+    /// Fetches ffmpeg on its own, for showing and rendering video.
+    pub fn get_ffmpeg(&mut self) {
+        let (job, cancel) = self.register("Downloading ffmpeg".to_string(), true);
+        let reporter = self.reporter(ANY_PROJECT);
+        std::thread::spawn(move || {
+            let result = tools::ensure(&[Tool::Ffmpeg], &cancel, &mut |_, fraction| reporter.send(JobEvent::Progress { job, fraction }));
+            reporter.send(match result {
+                Ok(()) => JobEvent::FfmpegReady,
+                Err(error) => JobEvent::ToolsFailed { error },
+            });
+            reporter.send(JobEvent::Done { job });
+        });
+    }
+
+    /// Starts a search, and returns its job, which reports what's happening in its label.
+    pub fn search_songs(&mut self, query: String) -> u64 {
+        let (job, cancel) = self.register("Searching".to_string(), true);
+        let reporter = self.reporter(ANY_PROJECT);
+        let _ = self.online_queue.send(Box::new(move || {
+            let prepared = online::prepare(&cancel, &mut |label, fraction| {
+                reporter.send(JobEvent::Label { job, label: label.to_string() });
+                reporter.send(JobEvent::Progress { job, fraction });
+            });
+            reporter.send(JobEvent::Label { job, label: "Searching".to_string() });
+            let results = prepared.and_then(|()| online::search(&query, &cancel));
+            reporter.send(JobEvent::SongResults { job, results });
+            reporter.send(JobEvent::Done { job });
+        }));
+        job
+    }
+
+    pub fn download_song(&mut self, song: SongResult, kind: DownloadKind, dir: PathBuf, split: bool) {
+        let (job, cancel) = self.register(format!("Downloading {}", song.title), true);
+        let reporter = self.reporter(self.project);
+        let _ = self.online_queue.send(Box::new(move || {
+            let result = online::prepare(&cancel, &mut |_, _| {}).and_then(|()| online::download(&song, kind, &dir, &cancel, &mut |fraction| reporter.send(JobEvent::Progress { job, fraction })));
+            reporter.send(match result {
+                Ok(path) => JobEvent::SongDownloaded { path, split },
+                Err(error) => JobEvent::SongFailed { error },
+            });
+            reporter.send(JobEvent::Done { job });
+        }));
     }
 
     pub fn split_stems(&mut self, source: SourceId, name: &str, input: PathBuf, settings: StemSettings, low_memory: bool) {

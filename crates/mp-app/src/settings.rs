@@ -11,6 +11,8 @@ use std::path::PathBuf;
 pub struct Settings {
     pub audio: AudioConfig,
     pub stems: StemSettings,
+    pub download_dir: Option<PathBuf>,
+    pub download_kind: mp_analysis::online::DownloadKind,
 }
 
 fn path() -> PathBuf {

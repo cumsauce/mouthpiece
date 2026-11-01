@@ -3,7 +3,6 @@
 use crate::app::{App, ToastAction, ToastKind};
 use crate::ds::*;
 use crate::panels::arranger::truncate;
-use crate::panels::video::FFMPEG_INSTALL;
 use eframe::egui::{self, Ui};
 use mp_analysis::stems::{self, Setup, StemError, StemFormat, VOCAL_MODELS};
 use mp_engine::{list_hosts, list_outputs, system_output_name, AudioConfig, OutputInfo};
@@ -14,13 +13,6 @@ use std::sync::Arc;
 
 const BLOCK_SIZES: [u32; 7] = [64, 128, 256, 512, 1024, 2048, 4096];
 const LABEL_W: f32 = 104.0;
-const UV_INSTALL: &str = if cfg!(target_os = "macos") {
-    "brew install uv"
-} else if cfg!(windows) {
-    "winget install astral-sh.uv"
-} else {
-    "curl -LsSf https://astral.sh/uv/install.sh | sh"
-};
 
 /// The device lists, read once when the window opens, because reading them can be slow.
 pub struct AudioPanel {
@@ -32,7 +24,6 @@ pub struct AudioPanel {
 pub struct SplitDialog {
     source: SourceId,
     setup: Setup,
-    ffmpeg: bool,
     error: Option<StemError>,
 }
 
@@ -57,15 +48,6 @@ fn field(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
         add(ui);
     });
     ui.add_space(SP_1);
-}
-
-fn command_row(ui: &mut Ui, command: &str) {
-    ui.horizontal(|ui| {
-        keycap(ui, command);
-        if ui.add(Button::secondary("Copy").small()).clicked() {
-            ui.ctx().copy_text(command.to_string());
-        }
-    });
 }
 
 impl App {
@@ -336,7 +318,16 @@ impl App {
             self.finish_stems(source, files);
             return;
         }
-        self.stems.dialog = Some(SplitDialog { source, setup: stems::setup(), ffmpeg: mp_model::video::find_ffmpeg().is_some(), error: None });
+        self.stems.dialog = Some(SplitDialog { source, setup: stems::setup(), error: None });
+    }
+
+    /// For when splitting was already asked for: only stops to ask if there's a large download first.
+    pub fn open_split_ready(&mut self, source: SourceId) {
+        self.open_split(source);
+        if self.stems.dialog.as_ref().is_some_and(|d| d.setup == Setup::Ready) {
+            self.stems.dialog = None;
+            self.start_split(source, false);
+        }
     }
 
     fn start_split(&mut self, source: SourceId, low_memory: bool) {
@@ -359,7 +350,7 @@ impl App {
         }
         match source {
             Some(source) => {
-                self.stems.dialog = Some(SplitDialog { source, setup: stems::setup(), ffmpeg: mp_model::video::find_ffmpeg().is_some(), error: Some(error) });
+                self.stems.dialog = Some(SplitDialog { source, setup: stems::setup(), error: Some(error) });
             }
             None => self.toast(ToastKind::Bad, error.message()),
         }
@@ -412,13 +403,12 @@ impl App {
     }
 
     pub fn split_modal(&mut self, ctx: &egui::Context) {
-        let Some(mut dialog) = self.stems.dialog.take() else { return };
+        let Some(dialog) = self.stems.dialog.take() else { return };
         let name = self.project.source(dialog.source).map_or(String::new(), |s| s.name.clone());
         let mut close = false;
         let mut go = false;
         let mut less_memory = false;
         let mut settings = self.settings.stems.clone();
-        let ffmpeg = dialog.ffmpeg;
         let dismissed = modal(ctx, "split", 460.0, |ui: &mut Ui| {
             ui.label(heading(&format!("Split {} into stems", truncate(&name, 30))));
             ui.add_space(SP_1);
@@ -451,37 +441,16 @@ impl App {
                 ui.label(caption(error.message()).color(BAD));
                 ui.add_space(SP_2);
             }
-            if !ffmpeg {
-                ui.label(strong("This needs ffmpeg"));
-                command_row(ui, FFMPEG_INSTALL);
-                ui.add_space(SP_2);
-            }
-            match &dialog.setup {
-                Setup::Ready => {
-                    ui.label(caption("Takes minutes with a GPU, and much longer without one. The first split also downloads the models."));
-                }
-                Setup::NeedsInstall(_) => {
-                    ui.label(caption("The first time, this downloads the separation software and its models, which come to several gigabytes. After that it works offline."));
-                }
-                Setup::NothingToInstallWith => {
-                    ui.label(strong("This needs uv, which sets up the separation software"));
-                    ui.label(caption("Install it, then check again. Everything else is done for you."));
-                    ui.add_space(SP_1);
-                    command_row(ui, UV_INSTALL);
-                }
-            }
+            ui.label(caption(match dialog.setup {
+                Setup::Ready => "Takes minutes with a GPU, and much longer without one. The first split also downloads the models.",
+                Setup::NeedsInstall => "The first time, this gets everything it needs by itself: the separation software, its models and ffmpeg. That's several gigabytes. After that it works offline.",
+            }));
             ui.add_space(SP_4);
             ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), CONTROL_H), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let able = ffmpeg && dialog.setup != Setup::NothingToInstallWith;
-                if able {
-                    let label = if matches!(dialog.setup, Setup::Ready) { "Split" } else { "Download and split" };
-                    go = ui.add(Button::primary(label)).clicked();
-                    if matches!(dialog.error, Some(StemError::OutOfMemory(_))) {
-                        less_memory = ui.add(Button::secondary("Split using less memory")).clicked();
-                    }
-                } else if ui.add(Button::primary("Check again")).clicked() {
-                    dialog.setup = stems::setup();
-                    dialog.ffmpeg = mp_model::video::find_ffmpeg().is_some();
+                let label = if dialog.setup == Setup::Ready { "Split" } else { "Download and split" };
+                go = ui.add(Button::primary(label)).clicked();
+                if matches!(dialog.error, Some(StemError::OutOfMemory(_))) {
+                    less_memory = ui.add(Button::secondary("Split using less memory")).clicked();
                 }
                 close = ui.add(Button::ghost("Cancel")).clicked();
             });
@@ -498,11 +467,11 @@ impl App {
         }
         if go || less_memory {
             match dialog.setup {
-                Setup::NeedsInstall(installer) => {
+                Setup::NeedsInstall => {
                     self.stems.after_install = Some(dialog.source);
-                    self.jobs.install_stems(installer);
+                    self.jobs.install_stems();
                 }
-                _ => self.start_split(dialog.source, less_memory),
+                Setup::Ready => self.start_split(dialog.source, less_memory),
             }
         } else if !dismissed && !close {
             self.stems.dialog = Some(dialog);

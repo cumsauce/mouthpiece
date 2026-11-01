@@ -16,6 +16,9 @@ serde_json.workspace = true
 rustfft.workspace = true
 symphonia = { version = "0.6", features = ["all"] }
 ureq = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"], optional = true }

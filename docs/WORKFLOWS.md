@@ -26,6 +26,8 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 - **Budget:** one drag, plus one click the first time to get a speech model. No configuration.
 - **Needs:** visible progress on the vocal itself, not hidden in a status bar. Tracks sorted and coloured
   by type. Typing is possible as soon as there are words, and it's clear why it isn't before then.
+- **Don't have the file?** Find a song online (⇧⌘F), from the first screen: search or paste a link, then **Add and split**.
+  Audio or video. The tools it needs arrive by themselves, and yt-dlp keeps itself up to date.
 - **Only have the song?** Drop it in. A project of one song offers **Split into stems** right where the next
   step would be, before any words are looked for. It carries on in the background, uses the stems already made if
   there are any, replaces the untouched song's track, and a video's picture stays on the vocal.
@@ -196,6 +198,8 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 | Getting stems meant leaving for another program first | **Split into stems** in the app, offered when a whole song arrives |
 | Dragging with any mouse button edited clips | Only the left button edits. **The middle button zooms and scrolls**, as in Bitwig |
 | The output was whatever the system chose at launch | **Audio settings** (⌘,): output, sample rate, block size, channels, applied live and remembered |
+| Starting a project meant finding the song elsewhere first | **Find a song online**, leading straight on to splitting |
+| Missing tools were a dead end with a command to copy | The app **installs what it needs** into its own folder |
 | In an empty input, **Space plays the line** just placed and stopping returns to where the next one goes |
 
 ## Keyboard map for the core loop

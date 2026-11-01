@@ -644,9 +644,13 @@ impl App {
     }
 
     fn empty_state(&mut self, ui: &mut Ui, area: Rect) {
-        let text = "A whole song can be split into stems for you. Vocals transcribe themselves, and tempo and key are detected.";
-        if hero_state(ui, area, "Drop a song or its stems here", text, "Choose files…").clicked() {
+        let text = "A whole song gets split for you. Words, tempo and key are found by themselves.";
+        let (choose, find) = hero_state(ui, area, "Drop a song or its stems here", text, "Choose files…", "Find a song online…");
+        if choose.clicked() {
             self.import_dialog();
+        }
+        if find.clicked() {
+            self.run(crate::actions::Action::FindSong);
         }
     }
 

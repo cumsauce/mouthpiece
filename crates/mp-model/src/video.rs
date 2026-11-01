@@ -3,7 +3,7 @@
 
 use crate::{Clip, Project, Seconds, SourceId};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// How long the last picture holds across a gap, so the short gaps between words don't flash black.
 pub const HOLD_SECONDS: Seconds = 0.5;
@@ -11,19 +11,33 @@ pub const HOLD_SECONDS: Seconds = 0.5;
 /// Finds ffmpeg, which handles everything to do with video. An app opened from the Finder doesn't
 /// get the shell's PATH, so the usual install locations are checked as well.
 pub fn ffmpeg_path() -> Option<PathBuf> {
-    static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
-    PATH.get_or_init(find_ffmpeg).clone()
+    let mut known = KNOWN_FFMPEG.lock().unwrap_or_else(|e| e.into_inner());
+    known.get_or_insert_with(find_ffmpeg).clone()
 }
 
-/// Looks again, for when someone may have just installed it.
+static KNOWN_FFMPEG: Mutex<Option<Option<PathBuf>>> = Mutex::new(None);
+static TOOLS_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Tells this where the app keeps programs it installed for itself.
+pub fn set_tools_dir(dir: PathBuf) {
+    let _ = TOOLS_DIR.set(dir);
+}
+
+/// Makes the next lookup look again, after one has been installed.
+pub fn forget_ffmpeg() {
+    *KNOWN_FFMPEG.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Looks now, rather than using what was found earlier.
 pub fn find_ffmpeg() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("MOUTHPIECE_FFMPEG") {
         return Some(PathBuf::from(path));
     }
     let from_env = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
     let usual = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(PathBuf::from);
+    let own = TOOLS_DIR.get().cloned();
     let binary = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-    from_env.into_iter().chain(usual).map(|dir| dir.join(binary)).find(|p| p.is_file())
+    from_env.into_iter().chain(usual).chain(own).map(|dir| dir.join(binary)).find(|p| p.is_file())
 }
 
 impl Project {

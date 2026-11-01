@@ -8,14 +8,6 @@ use mp_analysis::video::{PROXY_HEIGHT, PROXY_WIDTH};
 use mp_model::SourceId;
 use std::sync::atomic::Ordering;
 
-pub const FFMPEG_INSTALL: &str = if cfg!(target_os = "macos") {
-    "brew install ffmpeg"
-} else if cfg!(windows) {
-    "winget install ffmpeg"
-} else {
-    "sudo apt install ffmpeg"
-};
-
 impl App {
     /// What to show now: the word being auditioned if there is one, otherwise the timeline's picture.
     pub fn current_picture(&self) -> Option<(SourceId, f64)> {
@@ -37,15 +29,13 @@ impl App {
         if mp_model::video::ffmpeg_path().is_none() {
             card_frame().show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(strong("Install ffmpeg to see the picture"));
+                ui.label(strong("Get ffmpeg to see the picture"));
                 ui.label(caption("Your edits will then cut the video by themselves. Sound works without it."));
                 ui.add_space(SP_1);
-                ui.horizontal(|ui| {
-                    keycap(ui, FFMPEG_INSTALL);
-                    if ui.add(Button::secondary("Copy").small()).clicked() {
-                        ui.ctx().copy_text(FFMPEG_INSTALL.to_string());
-                    }
-                });
+                let getting = self.jobs.active.iter().any(|j| j.label == "Downloading ffmpeg");
+                if ui.add(Button::secondary(if getting { "Downloading…" } else { "Download ffmpeg" }).enabled(!getting)).clicked() {
+                    self.jobs.get_ffmpeg();
+                }
             });
             ui.add_space(SP_2);
             return;
