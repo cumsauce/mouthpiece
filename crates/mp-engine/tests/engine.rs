@@ -234,6 +234,41 @@ fn stopping_mid_clip_does_not_click() {
 }
 
 #[test]
+fn a_change_replaces_the_recording_only_where_it_applies() {
+    let mut s = setup(48000);
+    s.project.add_clip(s.track, s.source, 0.0, 0.0, 1.0).unwrap();
+    let silent = Arc::new(Stereo { l: vec![0.0; 48000], r: vec![0.0; 48000] });
+    let other = s.project.add_source("b.wav".into(), "b".into(), 1.0, TrackKind::Music);
+    s.bank.buffers.insert(other, silent);
+    let id = s.project.create_patch(s.track, (0.25, 0.5), "old".into(), (s.source, 0, 0));
+    let clip = s.project.add_clip(s.track, other, 0.25, 0.0, 0.25).unwrap();
+    s.project.add_patch_version(id, "new".into(), &[clip]);
+
+    // The ramp source plays either side, keeps its position, and is silent during the change.
+    let out = render(&s, 1.0);
+    assert!((out.l[6000] - 6001.0 / 48000.0).abs() < 1e-4);
+    assert!(out.l[18000].abs() < 1e-4, "{}", out.l[18000]);
+    assert!((out.l[36000] - 36001.0 / 48000.0).abs() < 1e-4, "{}", out.l[36000]);
+
+    // Switching back plays the recording straight through, as though nothing happened.
+    s.project.bypass_patches = true;
+    let out = render(&s, 1.0);
+    assert!((out.l[18000] - 18001.0 / 48000.0).abs() < 1e-4, "{}", out.l[18000]);
+}
+
+#[test]
+fn a_change_hides_the_right_part_of_a_reversed_clip() {
+    let mut s = setup(48000);
+    let c = s.project.add_clip(s.track, s.source, 0.0, 0.0, 1.0).unwrap();
+    s.project.clip_mut(c).unwrap().reversed = true;
+    let id = s.project.create_patch(s.track, (0.25, 0.5), "old".into(), (s.source, 0, 0));
+    s.project.add_patch_version(id, "new".into(), &[]);
+    let out = render(&s, 1.0);
+    assert!(out.l[18000].abs() < 1e-4);
+    assert!((out.l[36000] - (48000.0 - 36000.0) / 48000.0).abs() < 1e-4, "{}", out.l[36000]);
+}
+
+#[test]
 fn audio_path_never_allocates() {
     let mut s = setup(480000);
     for i in 0..200 {

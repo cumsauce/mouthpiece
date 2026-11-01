@@ -114,6 +114,8 @@ pub struct App {
     pub hit_drag: Option<Hit>,
     pub clipboard: Vec<(mp_model::Clip, TrackId)>,
     pub word_drag: Option<mp_model::WordId>,
+    pub selected_patch: Option<mp_model::PatchId>,
+    pub trial: Option<crate::panels::trial::Trial>,
     pub word_dialog: Option<WordDialog>,
     pub video: HashMap<SourceId, Arc<mp_analysis::video::VideoProxy>>,
     pub video_texture: Option<TextureHandle>,
@@ -202,6 +204,8 @@ impl App {
             hit_drag: None,
             clipboard: Vec::new(),
             word_drag: None,
+            selected_patch: None,
+            trial: None,
             word_dialog: None,
             video: HashMap::new(),
             video_texture: None,
@@ -291,6 +295,10 @@ impl App {
     }
 
     pub fn undo(&mut self) {
+        if self.trial.is_some() {
+            self.cancel_trial();
+            return;
+        }
         match self.history.undo(&mut self.project) {
             Some(label) => {
                 self.after_history_change();
@@ -628,6 +636,11 @@ impl App {
         self.jobs.switch_project();
         self.clipboard.clear();
         self.word_drag = None;
+        self.selected_patch = None;
+        self.trial = None;
+        self.say.rewrite = None;
+        self.say.word_selection = None;
+        self.editor.selected_sound = None;
         self.word_dialog = None;
         self.video.clear();
         self.video_frame = None;
@@ -644,7 +657,6 @@ impl App {
         self.say.plan.clear();
         self.say.dirty = true;
         self.editor.range = None;
-        self.editor.selected_word = None;
         self.editor.last_track = None;
         self.editor.needs_fit = true;
         self.project = Project::default();

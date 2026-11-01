@@ -25,7 +25,8 @@ pub struct EditorState {
     pub show_spectrogram: bool,
     pub show_words: bool,
     pub show_phonemes: bool,
-    pub selected_word: Option<(u64, usize)>,
+    /// A phoneme selected in a placed clip, which F replaces.
+    pub selected_sound: Option<(mp_model::ClipId, Hit)>,
     pub last_track: Option<TrackId>,
 }
 
@@ -41,7 +42,7 @@ impl Default for EditorState {
             show_spectrogram: true,
             show_words: true,
             show_phonemes: true,
-            selected_word: None,
+            selected_sound: None,
             last_track: None,
         }
     }
@@ -49,6 +50,7 @@ impl Default for EditorState {
 
 /// A word or phoneme block as drawn: its source range and where it sits on the arrangement.
 struct Chip {
+    clip: mp_model::ClipId,
     hit: Hit,
     x0: f32,
     x1: f32,
@@ -270,7 +272,9 @@ impl App {
         let pointer = response.hover_pos();
         let (alt, cmd) = ui.input(|i| (i.modifiers.alt, i.modifiers.command));
         let zone_at = |pos: egui::Pos2, alt: bool| {
-            track.clips.iter().rev().find_map(|c| hit_zone(&view, rect, c, pos, alt).map(|z| (c.id, z)))
+            let top = track.clips.iter().rev().filter(|c| c.patch.is_some());
+            let rest = track.clips.iter().rev().filter(|c| c.patch.is_none());
+            top.chain(rest).find_map(|c| hit_zone(&view, rect, c, pos, alt).map(|z| (c.id, z)))
         };
         if let Some((_, zone)) = pointer.and_then(|p| zone_at(p, alt)) {
             if zone == Zone::Body {
@@ -335,24 +339,29 @@ impl App {
         let painter = ui.painter_at(rect);
         let muted = track.mute;
         let hover = pointer.and_then(|p| zone_at(p, alt)).map(|h| h.0);
-        for clip in &track.clips {
-            let r = clip_rect(&view, rect, clip);
-            if r.right() < rect.left() || r.left() > rect.right() {
-                continue;
+        for changes in [false, true] {
+            if changes {
+                self.paint_change_shade(&painter, &view, rect, track.id);
             }
-            self.paint_clip(
-                &painter,
-                &view,
-                rect,
-                track,
-                clip,
-                PaintOptions {
-                    selected: self.selection.contains(&clip.id),
-                    hovered: hover == Some(clip.id),
-                    show_waveform: true,
-                    track_muted: muted,
-                },
-            );
+            for clip in track.clips.iter().filter(|c| c.patch.is_some() == changes) {
+                let r = clip_rect(&view, rect, clip);
+                if r.right() < rect.left() || r.left() > rect.right() {
+                    continue;
+                }
+                self.paint_clip(
+                    &painter,
+                    &view,
+                    rect,
+                    track,
+                    clip,
+                    PaintOptions {
+                        selected: self.selection.contains(&clip.id),
+                        hovered: hover == Some(clip.id),
+                        show_waveform: true,
+                        track_muted: muted || (changes && self.project.bypass_patches),
+                    },
+                );
+            }
         }
         self.paint_joins(&painter, &view, rect, track);
     }
@@ -418,6 +427,7 @@ impl App {
                     let (x0, x1) = (x0.min(x1), x0.max(x1));
                     if x1 >= rect.left() && x0 <= rect.right() {
                         chips.push(Chip {
+                            clip: clip.id,
                             hit: Hit {
                                 source: clip.source.0,
                                 start,
@@ -465,14 +475,14 @@ impl App {
         if let Some(c) = hovered {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
             self.hint = match &c.hit.context {
-                Some(word) => format!("/{}/ in \"{word}\". Click to hear, double-click to place, or drag to the timeline.", c.hit.text),
-                None => format!("\"{}\". Click to hear, double-click to place, or drag to the timeline.", c.hit.text),
+                Some(word) => format!("/{}/ in \"{word}\". Click, then F to try other versions in place. Double-click to place it.", c.hit.text),
+                None => format!("\"{}\". Click to hear, Shift-click for a phrase, C to change it. Double-click to place it.", c.hit.text),
             };
         }
-        let mut clicked: Option<Hit> = None;
+        let mut clicked: Option<(mp_model::ClipId, Hit)> = None;
         let mut double: Option<Hit> = None;
         if response.clicked() {
-            clicked = response.interact_pointer_pos().and_then(|p| chip_at(p.x)).map(|c| c.hit.clone());
+            clicked = response.interact_pointer_pos().and_then(|p| chip_at(p.x)).map(|c| (c.clip, c.hit.clone()));
         }
         if response.double_clicked() {
             double = response.interact_pointer_pos().and_then(|p| chip_at(p.x)).map(|c| c.hit.clone());
@@ -483,11 +493,16 @@ impl App {
             }
         }
 
-        let selected_word = self.editor.selected_word;
+        let selected_words = self.say.word_selection;
+        let selected_sound = self.editor.selected_sound.as_ref().map(|(c, h)| (*c, h.start));
         for chip in &chips {
             let r = Rect::from_min_max(egui::pos2(chip.x0 + 0.5, rect.top() + 3.0), egui::pos2(chip.x1 - 0.5, rect.bottom() - 2.0));
             let is_hover = hovered.is_some_and(|h| h.hit.start == chip.hit.start && h.hit.end == chip.hit.end);
-            let is_selected = !phonemes && selected_word == Some((chip.hit.source, chip.hit.word_index));
+            let is_selected = if phonemes {
+                selected_sound == Some((chip.clip, chip.hit.start))
+            } else {
+                selected_words.is_some_and(|(s, a, b)| s.0 == chip.hit.source && (a..=b).contains(&chip.hit.word_index))
+            };
             let base = track_color(track.color);
             let fill = if is_selected {
                 TEXT
@@ -510,9 +525,14 @@ impl App {
                 inner.galley(egui::pos2(x, r.center().y - galley.size().y * 0.5), galley, color);
             }
         }
-        if let Some(hit) = clicked {
-            if !phonemes {
-                self.editor.selected_word = Some((hit.source, hit.word_index));
+        if let Some((clip, hit)) = clicked {
+            if phonemes {
+                self.editor.selected_sound = Some((clip, hit.clone()));
+                self.selection = vec![clip];
+                self.hint = "Press F to try other versions of this sound, in place.".to_string();
+            } else {
+                let extend = ui.input(|i| i.modifiers.shift);
+                self.select_word(mp_model::SourceId(hit.source), hit.word_index, extend);
             }
             self.audition_hit(&hit);
         }

@@ -35,12 +35,19 @@ impl GraphCompiler {
             .tracks
             .iter()
             .map(|track| {
-                let mut voices: Vec<Voice> = track
-                    .clips
-                    .iter()
-                    .filter(|c| !c.muted)
-                    .filter_map(|c| clip_voice(c, bank, cache, sr))
-                    .collect();
+                let hidden: Vec<(u64, u64)> = project.hidden_ranges(track.id).iter().map(|(a, b)| (to_frame(*a), to_frame(*b))).collect();
+                let mut voices: Vec<Voice> = Vec::with_capacity(track.clips.len());
+                for clip in track.clips.iter().filter(|c| !c.muted) {
+                    if clip.patch.is_some() && project.bypass_patches {
+                        continue;
+                    }
+                    let Some(voice) = clip_voice(clip, bank, cache, sr) else { continue };
+                    if clip.patch.is_some() {
+                        voices.push(voice);
+                    } else {
+                        split_voice(voice, &hidden, (HIDE_FADE_S * sr as f64) as usize, &mut voices);
+                    }
+                }
                 voices.sort_by_key(|v| v.start);
                 let longest_voice = voices.iter().map(|v| v.frames as u64).max().unwrap_or(0);
                 let (pl, pr) = pan_gains(track.pan);
@@ -134,6 +141,41 @@ fn clip_voice(c: &Clip, bank: &SourceBank, cache: &RenderCache, sr: u32) -> Opti
         fade_in: to_frames(c.fade_in),
         fade_out: to_frames(c.fade_out),
     })
+}
+
+/// How quickly a recording fades out and in around a change.
+const HIDE_FADE_S: f64 = 0.005;
+
+/// Plays a voice except in the given ranges of the timeline, without touching what it plays.
+fn split_voice(voice: Voice, hidden: &[(u64, u64)], fade: usize, out: &mut Vec<Voice>) {
+    let mut ranges: Vec<(u64, u64)> = hidden.iter().copied().filter(|(a, b)| *a < voice.end() && *b > voice.start).collect();
+    if ranges.is_empty() {
+        out.push(voice);
+        return;
+    }
+    ranges.sort_unstable();
+    let mut cursor = voice.start;
+    let mut parts = Vec::new();
+    for (a, b) in ranges {
+        if a > cursor {
+            parts.push((cursor, a));
+        }
+        cursor = cursor.max(b);
+    }
+    if cursor < voice.end() {
+        parts.push((cursor, voice.end()));
+    }
+    for (a, b) in parts {
+        let mut part = voice.clone();
+        let (offset, frames) = ((a - voice.start) as usize, (b - a) as usize);
+        // A reversed voice reads its buffer from the far end, so a later part is an earlier stretch.
+        part.buffer_start += if voice.reversed { voice.frames - offset - frames } else { offset };
+        part.frames = frames;
+        part.start = a;
+        part.fade_in = if a == voice.start { voice.fade_in } else { fade };
+        part.fade_out = if b == voice.end() { voice.fade_out } else { fade };
+        out.push(part);
+    }
 }
 
 /// A voice that auditions part of a source immediately through the preview path.

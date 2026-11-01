@@ -6,8 +6,13 @@ set -euo pipefail
 binary="$1"
 out="$(mkdir -p "$2" && cd "$2" && pwd)"
 timeout_seconds=120
+python=python3
+case "$(uname -s)" in MINGW*|MSYS*) python=python ;; esac
+# The app reads these paths itself, so on Windows they need to be real Windows paths.
+native="$out"
+command -v cygpath >/dev/null && native="$(cygpath -m "$out")"
 
-python3 - "$out/tone.wav" <<'PY'
+"$python" - "$out/tone.wav" <<'PY'
 import math, struct, sys, wave
 with wave.open(sys.argv[1], "wb") as w:
     w.setnchannels(1)
@@ -18,15 +23,15 @@ PY
 
 cat > "$out/script.txt" <<SCRIPT
 wait 0.5
-import $out/tone.wav
+import $native/tone.wav
 wait 0.5
 idle
 wait 0.5
 action ZoomFit
 action PlayPause
 wait 1
-screenshot $out/screenshot.png
-dump $out/state.json
+screenshot $native/screenshot.png
+dump $native/state.json
 quit
 SCRIPT
 
@@ -44,7 +49,7 @@ if kill -0 "$pid" 2>/dev/null; then
 fi
 wait "$pid" || { status=$?; cat "$out/app.log"; echo "The app exited with status $status" >&2; exit 1; }
 
-python3 - "$out/state.json" "$out/screenshot.png" <<'PY'
+"$python" - "$out/state.json" "$out/screenshot.png" <<'PY'
 import json, os, sys
 state = json.load(open(sys.argv[1]))
 assert len(state["tracks"]) == 1, "the test tone wasn't imported"

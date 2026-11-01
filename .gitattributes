@@ -1,0 +1,2 @@
+# Windows checkouts must not rewrite line endings: bash scripts break, and the dictionary is read as-is.
+* text=auto eol=lf

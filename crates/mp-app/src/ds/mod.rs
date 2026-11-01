@@ -68,7 +68,7 @@ mod conformance {
     /// Accent means "selected, playing or the main action". Used elsewhere, it stops meaning anything.
     #[test]
     fn accent_stays_scarce() {
-        const ALLOWED: &[&str] = &["lane.rs", "arranger.rs", "editor.rs", "say.rs", "overlays.rs"];
+        const ALLOWED: &[&str] = &["lane.rs", "arranger.rs", "editor.rs", "say.rs", "trial.rs", "overlays.rs"];
         for (path, text) in panel_sources() {
             let name = path.file_name().unwrap().to_str().unwrap().to_string();
             if !ALLOWED.contains(&name.as_str()) {

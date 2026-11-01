@@ -89,6 +89,12 @@ impl App {
         }
 
         divider_v(ui);
+        if ui.add(IconButton::new(Icon::Search, "Try other sounds and takes in place").shortcut("F").small()).clicked() {
+            self.run(Action::TrySounds);
+        }
+        if first.patch.is_some() && ui.add(IconButton::new(Icon::Compare, "Compare with the original").shortcut("A").small()).clicked() {
+            self.run(Action::CompareChange);
+        }
         if count > 1 && ui.add(IconButton::new(Icon::Crossfade, "Crossfade together. Drag to change how long.").shortcut("X").small()).clicked() {
             self.run(Action::Crossfade);
         }

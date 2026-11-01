@@ -16,7 +16,8 @@ use mp_model::{SourceId, TrackKind};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SayTab {
     Say,
-    Transcript,
+    Lyrics,
+    Changes,
     Words,
     Sources,
 }
@@ -33,6 +34,12 @@ pub struct SayState {
     pub quantize_words: bool,
     pub tune_words: bool,
     pub pending_transcribe: Vec<SourceId>,
+    /// Lyrics being rewritten, which makes the input change them rather than place a new line.
+    pub rewrite: Option<crate::panels::changes::Rewrite>,
+    /// Words selected in the lyrics or editor, as a source and a range of words.
+    pub word_selection: Option<(SourceId, usize, usize)>,
+    /// The last thing tried, for comparing with what was there.
+    pub trial_last: Option<usize>,
     similar: (String, Vec<String>),
 }
 
@@ -49,6 +56,9 @@ impl Default for SayState {
             quantize_words: false,
             tune_words: false,
             pending_transcribe: Vec::new(),
+            rewrite: None,
+            word_selection: None,
+            trial_last: None,
             similar: (String::new(), Vec::new()),
         }
     }
@@ -58,21 +68,26 @@ const ROW_H: f32 = 50.0;
 const RESULT_LIMIT: usize = 300;
 const FOOTER_H: f32 = 92.0;
 
-fn input_id() -> egui::Id {
+pub fn input_id() -> egui::Id {
     egui::Id::unique("say-input")
 }
 
 impl App {
     pub fn say_panel(&mut self, ui: &mut Ui) {
         self.video_preview(ui);
-        tabs(ui, &mut self.say.tab, &[(SayTab::Say, "Say"), (SayTab::Transcript, "Transcript"), (SayTab::Words, "My words"), (SayTab::Sources, "Sources")]);
+        if self.trial.is_some() {
+            self.trial_panel(ui);
+            return;
+        }
+        tabs(ui, &mut self.say.tab, &[(SayTab::Say, "Say"), (SayTab::Lyrics, "Lyrics"), (SayTab::Changes, "Changes"), (SayTab::Words, "Words"), (SayTab::Sources, "Files")]);
         ui.add_space(SP_2);
         if self.say.dirty {
             self.replan();
         }
         match self.say.tab {
             SayTab::Say => self.say_tab(ui),
-            SayTab::Transcript => self.transcript_tab(ui),
+            SayTab::Lyrics => self.transcript_tab(ui),
+            SayTab::Changes => self.changes_tab(ui),
             SayTab::Words => self.words_tab(ui),
             SayTab::Sources => self.sources_tab(ui),
         }
@@ -82,6 +97,10 @@ impl App {
     /// typing more doesn't undo auditioning.
     pub fn replan(&mut self) {
         self.say.dirty = false;
+        if self.say.rewrite.is_some() {
+            self.plan_rewrite();
+            return;
+        }
         let query = self.say.text.trim().to_string();
         let old = std::mem::take(&mut self.say.plan);
         self.say.plan = if query.starts_with('/') || query.starts_with('~') {
@@ -90,12 +109,8 @@ impl App {
             vec![SentencePart { text: query, source, options, selected: 0, made: None, use_made: false }]
         } else {
             let mut plan = sentence::plan(&query, &self.index);
+            self.mark_made_words(&mut plan);
             for part in &mut plan {
-                // A word you made takes priority over anything found or stitched.
-                if let Some(word) = self.project.word_named(&part.text) {
-                    part.made = Some(word.id.0);
-                    part.use_made = true;
-                }
                 if let Some(previous) = old.iter().find(|p| p.text == part.text && p.source == part.source) {
                     part.selected = previous.selected.min(part.options.len().saturating_sub(1));
                     if part.made.is_some() && previous.made.is_some() {
@@ -108,10 +123,36 @@ impl App {
         self.say.focus = self.say.focus.min(self.say.plan.len().saturating_sub(1));
     }
 
+    /// A word you made takes priority over anything found or stitched.
+    pub fn mark_made_words(&self, plan: &mut [SentencePart]) {
+        for part in plan {
+            if let Some(word) = self.project.word_named(&part.text) {
+                part.made = Some(word.id.0);
+                part.use_made = true;
+            }
+        }
+    }
+
     fn say_tab(&mut self, ui: &mut Ui) {
         self.say_status(ui);
+        self.rewrite_header(ui);
         self.say_input(ui);
         ui.add_space(SP_2);
+        if self.say.rewrite.is_some() {
+            if self.say.plan.is_empty() {
+                ui.label(caption(if self.say.rewrite.as_ref().is_some_and(|r| r.runs.is_empty()) { "Edit the words. Only what you change gets new audio." } else { "These words will be removed." }));
+            } else {
+                self.plan_chips(ui);
+                ui.add_space(SP_2);
+            }
+            let list_height = (ui.available_height() - 66.0).max(ROW_H);
+            ui.allocate_ui(egui::vec2(ui.available_width(), list_height), |ui| {
+                ui.set_min_height(list_height);
+                self.focused_part(ui);
+            });
+            self.rewrite_footer(ui);
+            return;
+        }
         if self.say.text.trim().is_empty() {
             self.say_empty(ui);
             return;
@@ -184,14 +225,17 @@ impl App {
             if up || down {
                 self.step_focused_take(if down { 1 } else { -1 });
             }
+            let rewriting = self.say.rewrite.is_some();
             if preview {
-                self.preview_line();
+                if rewriting { self.preview_rewrite() } else { self.preview_line() }
             }
             if place {
-                self.place_sentence();
+                if rewriting { self.commit_rewrite() } else { self.place_sentence() }
             }
             if escape {
-                if self.say.text.is_empty() {
+                if rewriting {
+                    self.cancel_rewrite();
+                } else if self.say.text.is_empty() {
                     ui.memory_mut(|m| m.surrender_focus(id));
                 } else {
                     self.say.text.clear();
@@ -213,7 +257,7 @@ impl App {
                         .lock_focus(true)
                         .desired_rows(2)
                         .desired_width(f32::INFINITY)
-                        .hint_text("Type what they should say"),
+                        .hint_text(if self.say.rewrite.is_some() { "Edit the words" } else { "Type what they should say" }),
                 )
             })
             .inner;
@@ -687,6 +731,31 @@ impl App {
         self.audition_buffer(line);
     }
 
+    /// Places one part of a line, returning its clips and where it ends.
+    pub fn lay_out_part(p: &mut mp_model::Project, part: &SentencePart, track: mp_model::TrackId, start: f64) -> (Vec<mp_model::ClipId>, f64) {
+        if let Some(word) = part.made.filter(|_| part.use_made) {
+            let placed = p.place_word(mp_model::WordId(word), track, start);
+            let end = placed.iter().filter_map(|c| p.clip(*c)).map(|c| c.end()).fold(start, f64::max);
+            return (placed, end);
+        }
+        let mut pieces = Vec::new();
+        let mut at = start;
+        for hit in part.pieces() {
+            if let Some(clip) = App::place_hit_at(p, hit, track, at) {
+                at = p.clip(clip).map_or(at, |c| c.end());
+                pieces.push(clip);
+            }
+        }
+        // Pieces of a stitched word blend together and stay together, ready to adjust.
+        if pieces.len() > 1 {
+            const BLEND: f64 = 0.012;
+            p.group_clips(&pieces, Some(part.text.clone()));
+            p.crossfade_clips(&pieces, BLEND);
+        }
+        let end = pieces.iter().filter_map(|c| p.clip(*c)).map(|c| c.end()).fold(start, f64::max);
+        (pieces, end)
+    }
+
     /// Lays out the line on the Sentence track, starting at the playhead.
     pub fn place_sentence(&mut self) {
         if self.say.dirty {
@@ -707,29 +776,9 @@ impl App {
                     let snapped = p.snap_to_grid(start, grid);
                     start = if snapped < cursor { snapped + p.beat_seconds() * grid } else { snapped };
                 }
-                if let Some(word) = part.made.filter(|_| part.use_made) {
-                    let placed = p.place_word(mp_model::WordId(word), track, start);
-                    cursor = placed.iter().filter_map(|c| p.clip(*c)).map(|c| c.end()).fold(start, f64::max);
-                    clips.extend(placed);
-                } else {
-                    let mut pieces = Vec::new();
-                    let mut at = start;
-                    for hit in part.pieces() {
-                        if let Some(clip) = App::place_hit_at(p, hit, track, at) {
-                            at = p.clip(clip).map_or(at, |c| c.end());
-                            pieces.push(clip);
-                        }
-                    }
-                    // Pieces of a stitched word blend together and stay together, ready to adjust.
-                    if pieces.len() > 1 {
-                        const BLEND: f64 = 0.012;
-                        p.group_clips(&pieces, Some(part.text.clone()));
-                        p.crossfade_clips(&pieces, BLEND);
-                    }
-                    cursor = pieces.iter().filter_map(|c| p.clip(*c)).map(|c| c.end()).fold(start, f64::max);
-                    clips.extend(pieces);
-                }
-                cursor += gap;
+                let (placed, end) = App::lay_out_part(p, part, track, start);
+                clips.extend(placed);
+                cursor = end + gap;
             }
             (clips, cursor, track)
         });
@@ -765,6 +814,8 @@ impl App {
             empty_state(ui, rect, "Nothing transcribed yet", "Vocals appear here as readable text.", None);
             return;
         }
+        self.word_selection_bar(ui);
+        ui.add_space(SP_2);
         egui::ScrollArea::vertical().id_salt("transcript").auto_shrink(false).show(ui, |ui| {
             for (source, name) in sources {
                 ui.label(strong(name));
@@ -775,7 +826,7 @@ impl App {
                 ui.add_space(SP_4);
             }
         });
-        self.hint = "Click a word to hear it. Double-click to add it to your line. Drag to the timeline.".to_string();
+        self.hint = "Click to hear. Shift-click to select a phrase and change it. Double-click to add to your line. Drag to the timeline.".to_string();
     }
 
     /// Lyrics as flowing text, in phrases split at pauses. Painted directly, so that long ones stay fast.
@@ -820,18 +871,27 @@ impl App {
                 painter.text(egui::pos2(left, *seconds_y + 3.0), Align2::LEFT_TOP, label, font_num(9.5), TEXT_3);
             }
         }
+        let selected = self.say.word_selection.filter(|(s, _, _)| *s == source).map(|(_, a, b)| a..=b);
+        let changed: Vec<(usize, usize)> = self.project.patches.iter().filter(|p| p.source == source && p.active.is_some()).map(|p| (p.first_word, p.last_word)).collect();
         for (i, r) in &layout {
             if r.bottom() < clip.top() || r.top() > clip.bottom() {
                 continue;
             }
             let word = &transcript.words[*i];
             let is_hover = hovered == Some(*i);
-            if is_hover {
+            let is_selected = selected.as_ref().is_some_and(|s| s.contains(i));
+            if is_selected {
+                painter.rect_filled(r.expand2(egui::vec2(2.0, 0.0)), 0.0, ACCENT_DIM);
+            } else if is_hover {
                 painter.rect_filled(r.expand2(egui::vec2(2.0, 0.0)), R_S, CONTROL_HOVER);
             }
             // Dimmer words are ones the transcription is less sure of.
-            let color = if is_hover { TEXT } else if word.confidence < 0.5 { TEXT_3 } else { TEXT_2 };
+            let color = if is_hover || is_selected { TEXT } else if word.confidence < 0.5 { TEXT_3 } else { TEXT_2 };
             painter.text(r.left_center(), Align2::LEFT_CENTER, &word.text, font_body(), color);
+            // A line through words shows that they've been changed.
+            if changed.iter().any(|(a, b)| a <= i && i <= b) {
+                painter.hline(r.x_range(), r.center().y, Stroke::new(1.0, TEXT_3));
+            }
         }
         if hovered.is_some() {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
@@ -842,8 +902,10 @@ impl App {
         };
         if let Some(i) = hovered {
             if response.double_clicked() {
+                self.say.word_selection = None;
                 self.append_to_line(&normalize_word(&transcript.words[i].text));
             } else if response.clicked() {
+                self.select_word(source, i, ui.input(|input| input.modifiers.shift));
                 self.audition_hit(&hit_at(i));
             } else if response.drag_started() {
                 self.hit_drag = Some(hit_at(i));
@@ -851,8 +913,16 @@ impl App {
         }
     }
 
+    /// Selects a word, or extends the selection to it if `extend`.
+    pub fn select_word(&mut self, source: SourceId, word: usize, extend: bool) {
+        self.say.word_selection = match self.say.word_selection {
+            Some((s, a, b)) if extend && s == source => Some((s, a.min(word), b.max(word))),
+            _ => Some((source, word, word)),
+        };
+    }
+
     fn sources_tab(&mut self, ui: &mut Ui) {
-        if ui.add(Button::secondary("Add audio files…").icon(Icon::Plus).fill_width().tip("Add audio files", Some("⌘I"))).clicked() {
+        if ui.add(Button::secondary("Add files…").icon(Icon::Plus).fill_width().tip("Add audio or video files", Some("⌘I"))).clicked() {
             self.import_dialog();
         }
         ui.add_space(SP_2);

@@ -29,6 +29,7 @@ impl eframe::App for App {
                 self.palette_open = false;
             }
         } else {
+            self.trial_keys(&ctx);
             self.handle_shortcuts(&ctx);
         }
 

@@ -7,7 +7,7 @@
 //! | import <path> | drop <path> | download <model id> | mute_all <tracks to keep, comma separated> | transcript <part of source name> <word> <word>... | export <path> | save <path>
 //! | open <path> | move <x> <y> | click/dclick/rclick/cmdclick <x> <y>
 //! | drag/altdrag/shiftdrag/cmddrag <x1> <y1> <x2> <y2> | key <name> | type <text>
-//! | cmdkey <name> | copy | paste | close | recover | add_device <track> <reverb/compressor>
+//! | select_words <part of source name> <first> <last> | sound <track> <clip> <phoneme> | cmdkey <name> | copy | paste | close | recover | add_device <track> <reverb/compressor>
 //! | screenshot <path> | dump <path> | quit
 
 use crate::app::{App, BottomTab};
@@ -143,11 +143,35 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
         }
         "tab" => {
             app.say.tab = match rest {
-                "transcript" => SayTab::Transcript,
+                "lyrics" => SayTab::Lyrics,
+                "changes" => SayTab::Changes,
                 "sources" => SayTab::Sources,
                 "words" => SayTab::Words,
                 _ => SayTab::Say,
             };
+        }
+        "sound" => {
+            // Selects a phoneme in a placed clip, as clicking it in the editor would.
+            let clip = app.project.tracks.get(usizes[0]).and_then(|t| t.clips.get(usizes[1])).cloned();
+            if let Some(clip) = clip {
+                let word = app.index.transcript(clip.source.0).and_then(|t| {
+                    t.words.iter().enumerate().find(|(_, w)| w.end > clip.src_in + 0.02).map(|(i, w)| (i, w.clone()))
+                });
+                if let Some((i, w)) = word {
+                    let p = &w.phonemes[usizes[2]];
+                    let hit = mp_analysis::search::Hit {
+                        source: clip.source.0, start: p.start, end: p.end, text: p.symbol.clone(),
+                        context: Some(w.text.clone()), kind: mp_analysis::search::HitKind::Phonemes,
+                        confidence: w.confidence, pitch_hz: w.pitch_hz, word_index: i,
+                    };
+                    app.editor.selected_sound = Some((clip.id, hit));
+                }
+            }
+        }
+        "select_words" => {
+            if let Some(s) = app.project.sources.iter().find(|s| s.name.contains(rest.split_whitespace().next().unwrap_or_default())).map(|s| s.id) {
+                app.say.word_selection = Some((s, usizes[0], usizes[1]));
+            }
         }
         "resize" => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(numbers[0], numbers[1]))),
         "seek" => app.seek(numbers[0] as f64),
@@ -287,6 +311,12 @@ fn dump(app: &App, path: &str) {
         "pending_discard": format!("{:?}", app.pending_discard),
         "master_devices": app.project.master.devices.len(),
         "made_words": app.project.words.iter().map(|w| (w.name.clone(), w.parts.len())).collect::<Vec<_>>(),
+        "patches": app.project.patches.iter().map(|p| serde_json::json!({
+            "before": p.before, "text": p.current_text(), "active": p.active, "versions": p.versions.len() })).collect::<Vec<_>>(),
+        "bypass": app.project.bypass_patches,
+        "trial": app.trial.as_ref().map(|t| serde_json::json!({
+            "query": t.query, "count": t.candidates.len(), "current": t.current,
+            "top": t.candidates.iter().take(4).map(|c| (c.hit.context.clone(), c.same_before, c.same_after)).collect::<Vec<_>>() })),
         "video_frames": app.video.values().map(|v| v.frame_count()).sum::<usize>(),
         "has_video": app.project.has_video(),
         "toasts": app.toasts.iter().map(|t| t.text.clone()).collect::<Vec<_>>(),
@@ -299,7 +329,7 @@ fn dump(app: &App, path: &str) {
             "clips": t.clips.iter().map(|c| serde_json::json!({
                 "start": c.start, "src_in": c.src_in, "src_out": c.src_out, "stretch": c.stretch,
                 "pitch": c.pitch, "reversed": c.reversed, "label": c.label, "fade_in": c.fade_in,
-                "fade_out": c.fade_out, "gain": c.gain_db, "group": c.group.map(|g| g.0), "word": c.word_name })).collect::<Vec<_>>(),
+                "fade_out": c.fade_out, "gain": c.gain_db, "group": c.group.map(|g| g.0), "word": c.word_name, "patch": c.patch.map(|g| g.0) })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     });
     let _ = std::fs::write(path, serde_json::to_vec_pretty(&state).unwrap_or_default());

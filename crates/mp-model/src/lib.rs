@@ -5,9 +5,11 @@
 
 mod edit;
 mod history;
+mod patches;
 pub mod video;
 
 pub use history::History;
+pub use patches::{Patch, PatchVersion};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,7 +25,7 @@ macro_rules! id_type {
         pub struct $name(pub u64);
     )*};
 }
-id_type!(SourceId, TrackId, ClipId, DeviceId, GroupId, WordId);
+id_type!(SourceId, TrackId, ClipId, DeviceId, GroupId, WordId, PatchId);
 
 /// Minimum clip length on the arrangement, so a clip can always be seen and grabbed.
 pub const MIN_CLIP_LEN: Seconds = 0.005;
@@ -44,6 +46,12 @@ pub struct Project {
     /// Words made by hand, kept so they can be used again. See `MadeWord`.
     #[serde(default)]
     pub words: Vec<MadeWord>,
+    /// Alternatives to parts of the recordings. See `Patch`.
+    #[serde(default)]
+    pub patches: Vec<Patch>,
+    /// Plays every recording as it was, to compare with the changes.
+    #[serde(default)]
+    pub bypass_patches: bool,
     next_id: u64,
 }
 
@@ -203,6 +211,9 @@ pub struct Clip {
     pub fade_in_auto: bool,
     #[serde(default)]
     pub fade_out_auto: bool,
+    /// The change this clip belongs to, if any.
+    #[serde(default)]
+    pub patch: Option<PatchId>,
 }
 
 impl Clip {
@@ -230,6 +241,7 @@ impl Clip {
             origin: None,
             fade_in_auto: false,
             fade_out_auto: false,
+            patch: None,
         }
     }
 
@@ -354,6 +366,8 @@ impl Default for Project {
             loop_region: LoopRegion { start: 0.0, end: 8.0, enabled: false },
             metronome: false,
             words: Vec::new(),
+            patches: Vec::new(),
+            bypass_patches: false,
             next_id: 1,
         };
         let id = DeviceId(p.alloc_id());

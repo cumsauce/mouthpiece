@@ -38,6 +38,7 @@ pub enum Icon {
     Link,
     Bookmark,
     Restore,
+    Compare,
 }
 
 pub(super) fn arc_points(c: Pos2, r: f32, from: f32, to: f32, n: usize) -> Vec<Pos2> {
@@ -170,6 +171,10 @@ pub fn draw_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32
             }
         }
         Icon::Check => poly(&[v(-0.7, 0.05), v(-0.2, 0.55), v(0.7, -0.55)]),
+        Icon::Compare => {
+            poly(&[v(-0.8, -0.35), v(0.8, -0.35), v(0.35, -0.8)]);
+            poly(&[v(0.8, 0.35), v(-0.8, 0.35), v(-0.35, 0.8)]);
+        }
         Icon::Crossfade => {
             line(v(-0.85, -0.6), v(0.85, 0.6));
             line(v(-0.85, 0.6), v(0.85, -0.6));

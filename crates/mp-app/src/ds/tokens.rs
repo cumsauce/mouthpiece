@@ -186,6 +186,7 @@ fn load_fonts() -> FontDefinitions {
         "ui",
         &[
             (HELVETICA, 0),
+            ("C:\\Windows\\Fonts\\segoeui.ttf", 0),
             ("/usr/share/fonts/truetype/inter/Inter-Regular.ttf", 0),
             ("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", 0),
             ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0),
@@ -196,6 +197,7 @@ fn load_fonts() -> FontDefinitions {
         "ui-medium",
         &[
             (HELVETICA, 10),
+            ("C:\\Windows\\Fonts\\seguisb.ttf", 0),
             ("/usr/share/fonts/truetype/inter/Inter-Medium.ttf", 0),
             ("/usr/share/fonts/truetype/noto/NotoSans-Medium.ttf", 0),
             ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0),
@@ -204,7 +206,7 @@ fn load_fonts() -> FontDefinitions {
     );
     add(
         "mono",
-        &[("/System/Library/Fonts/Menlo.ttc", 0), ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 0)],
+        &[("/System/Library/Fonts/Menlo.ttc", 0), ("C:\\Windows\\Fonts\\consola.ttf", 0), ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 0)],
         FontFamily::Monospace,
     );
     let fallback = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();

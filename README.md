@@ -31,6 +31,9 @@ File dialogs use the desktop portal, or `zenity` if there isn't one. On Wayland,
 from a file manager may not work, so use **Choose files…** or start it under X11 with `env -u WAYLAND_DISPLAY ./mouthpiece/mouthpiece`.
 Where this README says `⌘`, use Ctrl on Linux.
 
+**Windows (x86_64, a CPU with AVX2).** Unzip it and run `mouthpiece.exe`. It isn't signed, so SmartScreen may ask
+you to confirm the first time. Where this README says `⌘`, use Ctrl.
+
 ## Build from source
 
 Needs Rust and CMake (`brew install cmake`). The first build compiles whisper.cpp and LAME, which takes a few minutes. On Linux, the packages to install are listed in
@@ -75,6 +78,19 @@ its name uses it, and it's listed under My words.
 
 Nothing you do changes your recordings, and editing a placed copy doesn't change the saved word. Revert to saved
 and Restore original (`⇧R`) go back from any experiment.
+
+### Finding the sound a word needs
+
+Click a sound in the editor's phoneme lane, or select a piece of a word, and press `F`. Every match appears, ranked
+by what will join best. Press ↓ to try each one: it's swapped into the word and plays in place, with the music.
+`A` flips back to what was there and `P` pins a favourite. Return keeps it, and Esc puts everything back.
+
+### Changing a few words in a song
+
+In Lyrics, click the first word and Shift-click the last, then press `C` and retype them. Only the words that really
+changed get new audio, fitted to the original timing. It stays on the vocal's own track, with the original
+underneath. `A` compares the two, even during playback. Press `C` again for another version. The Changes tab lists
+everything you've changed, and `⇧A` plays the whole original song.
 
 ### Video
 

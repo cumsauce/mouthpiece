@@ -18,7 +18,8 @@ pub fn ffmpeg_path() -> Option<PathBuf> {
         }
         let from_env = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
         let usual = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(PathBuf::from);
-        from_env.into_iter().chain(usual).map(|dir| dir.join("ffmpeg")).find(|p| p.is_file())
+        let binary = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+        from_env.into_iter().chain(usual).map(|dir| dir.join(binary)).find(|p| p.is_file())
     })
     .clone()
 }
@@ -36,7 +37,7 @@ impl Project {
             .filter(|track| !track.mute && (!any_solo || track.solo))
             .find_map(|track| {
                 track.clips.iter().rev().find(|c| {
-                    !c.muted && c.start <= t && t < c.end() && self.source(c.source).is_some_and(|s| s.has_video)
+                    !c.muted && c.start <= t && t < c.end() && self.clip_heard_at(track.id, c, t) && self.source(c.source).is_some_and(|s| s.has_video)
                 })
             })
     }

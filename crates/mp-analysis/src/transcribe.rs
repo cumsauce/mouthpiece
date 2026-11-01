@@ -38,6 +38,10 @@ impl WhisperModel {
 }
 
 pub fn app_data_dir() -> PathBuf {
+    if cfg!(windows) {
+        let base = std::env::var_os("APPDATA").map_or_else(std::env::temp_dir, PathBuf::from);
+        return base.join("Mouthpiece");
+    }
     let home = std::env::var_os("HOME").map_or_else(std::env::temp_dir, PathBuf::from);
     if cfg!(target_os = "macos") {
         return home.join("Library/Application Support/Mouthpiece");

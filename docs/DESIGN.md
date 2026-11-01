@@ -43,6 +43,7 @@ When two options seem equal, these break the tie, in this order.
 | `ds/gallery.rs` | A screen showing every component | Add new components here |
 | `panels/*.rs` | The screens | Built only from `ds` |
 | `shell.rs` | Panel arrangement and frame housekeeping | Keep it small |
+| `mp-model/src/patches.rs` | Changes: alternatives on a track, which hide what's under them | Only the active version's clips are on the track |
 | `mp-model/src/video.rs` | The edit list that clips imply | The picture has no timeline of its own |
 | `actions.rs` | The `ACTIONS` table: every command | Name, shortcut and group live here |
 | `app.rs` | State and operations | No drawing |
@@ -57,6 +58,7 @@ When two options seem equal, these break the tie, in this order.
 |              editor.rs  /  devices.rs  /  mixer.rs                   |
 +--------------------------- statusbar.rs -----------------------------+
    Over everything: overlays.rs, palette.rs, render.rs
+   say.rs hands over to changes.rs while rewriting, and trial.rs while trying sounds
 ```
 
 ## Tokens
@@ -198,6 +200,9 @@ if ui.add(IconButton::new(Icon::Loop, "Loop").shortcut("L").active(looping)).cli
 - **Audition on selection.** Choosing a word, take or sound should play it.
 - **Experiments are always safe.** Nothing changes a recording, and a saved word doesn't change when a placed
   copy does. Any new clip property must be covered by `restore_original`.
+- **Comparing happens in place.** To compare alternatives, swap them into the real project and play them in context,
+  rather than making people arrange copies. `render_context` plays any project state through the real engine.
+- **Don't add tracks to manage alternatives.** Use a change.
 - **Things that belong together stay together.** Use `group_members` when an operation acts on a clip as
   a unit, such as moving or copying. Copies get a new group, through `duplicate_clips`.
 - **Follow what you make.** After creating something, make sure it's on screen and noticed, as `after_place` does.

@@ -16,6 +16,8 @@ case "$os-$arch" in
   *-x86_64) export GGML_SSE42=ON GGML_AVX=ON GGML_AVX2=ON GGML_FMA=ON GGML_F16C=ON GGML_BMI2=ON ;;  # 2013 onward
 esac
 export MACOSX_DEPLOYMENT_TARGET=13.0
+python=python3
+case "$os" in MINGW*|MSYS*) python=python ;; esac
 if [ "$os" = Darwin ]; then
   # With a deployment target older than the SDK, whisper.cpp's OS version checks call into clang's
   # runtime library, which rustc doesn't link by itself.
@@ -24,7 +26,7 @@ fi
 
 cargo build --release --locked -p mp-app
 
-target_dir="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
+target_dir="$(cargo metadata --format-version 1 --no-deps | "$python" -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
 binary="$target_dir/release/mouthpiece"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 
@@ -66,6 +68,14 @@ PLIST
     cp "$binary" "$stage/mouthpiece"
     cp README.md "${notices[@]}" "$stage/"
     tar -C dist -czf "dist/Mouthpiece-$label-linux-$arch.tar.gz" mouthpiece
+    ;;
+  MINGW*|MSYS*)
+    stage=dist/mouthpiece
+    mkdir -p "$stage"
+    cp "$binary.exe" "$stage/mouthpiece.exe"
+    cp README.md "${notices[@]}" "$stage/"
+    # Paths are relative, so it doesn't matter that PowerShell doesn't know MSYS paths.
+    powershell -NoProfile -Command "Compress-Archive -Path dist/mouthpiece -DestinationPath dist/Mouthpiece-$label-windows-$arch.zip"
     ;;
   *)
     echo "Unsupported platform: $os" >&2

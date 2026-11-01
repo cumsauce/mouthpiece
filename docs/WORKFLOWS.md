@@ -108,7 +108,38 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 - **Failure to avoid:** a separate video timeline to keep in sync. The clips already know their timecodes.
 - **Requires:** ffmpeg, which isn't bundled. Sound works without it, and the app says how to get it.
 
-### 9. Finish and share
+### 9. Find the sound that completes a word
+
+> When a word needs one particular sound, I want to hear every version of it in place, so that I can choose
+> by ear instead of scrolling, cutting and comparing by hand.
+
+- **Done when:** the word sounds right, and everything I tried along the way is gone.
+- **Budget:** click the sound or piece, `F`, then one key per candidate. Nothing to cut, line up or clean up.
+- **Needs:**
+  - **The search done for you.** Every occurrence, ranked by what joins naturally: same neighbouring sounds,
+    then close pitch and length.
+  - **Comparing in place.** Each candidate is swapped into the word and played in context with the music.
+    `A` flips back to what was there. `P` pins favourites to the top.
+  - **Cheap to leave.** Return keeps it. Esc puts everything back, including any cuts made to get there.
+- **Failure to avoid:** leaving a pile of cut-up candidates behind.
+
+### 10. Change a few words in a song
+
+> When I'm keeping most of a vocal and changing a phrase here and there, I want to hear each change against the
+> original, so that I can judge it without a mess of parallel tracks.
+
+- **Done when:** the song plays with the changes, on the original track, and I can still get back to the original
+  of any of them.
+- **Budget:** select the words, `C`, edit the text, Return. Then `A` compares, without stopping playback.
+- **Needs:**
+  - **Editing words, not audio.** Change "can say" to "can love" and only "love" gets new audio. Kept words stay
+    as they were sung. New words are fitted to the timing of what they replace.
+  - **No extra tracks.** A change sits on the vocal's own lane, hiding what's beneath it without touching it.
+  - **Versions.** A change can hold several tries, and switching between them is instant, even while looping.
+  - **A list of everything changed,** with what it used to say, and one switch to hear the whole original song.
+- **Failure to avoid:** a screen full of tracks to mute and solo.
+
+### 11. Finish and share
 
 > When it's good, I want an MP3, so I can post it.
 
@@ -131,10 +162,16 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 | Words that don't exist had to be rebuilt each time | Stitched words arrive **grouped and blended**, and ⇧W **saves** them to find by typing |
 | Overlapping clips simply summed | Overlaps **crossfade** automatically, marked with an X |
 | Experiments felt risky | **Restore original** and **Revert to saved**, on top of undo |
+| Comparing sounds meant cutting candidates out by hand | **Try** (`F`) swaps each one in live, ranked by how well it joins |
+| Trying edits meant stacking parallel tracks | **Changes** live on the vocal's own lane, with versions and instant A/B |
+| Edits started from audio, not from what was being said | **Select lyrics and retype them.** A word diff means only real changes get new audio |
 | Hearing the line alone meant finding the track and clicking S | **Solo the selection's track** with one key, and play from the selection with another |
 | After placing a line, focus stayed in the input, where Space types a space | In an empty input, **Space plays the line** just placed and stopping returns to where the next one goes |
 
 ## Keyboard map for the core loop
+
+While trying (`F`): ↑ ↓ try candidates, `A` compares with what was there, `P` pins, Space replays, Return keeps,
+Esc puts everything back.
 
 | Key | In the Say input | On the timeline |
 |---|---|---|
@@ -148,6 +185,9 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 | Q | | Quantize |
 | G | | Close gaps |
 | Shift+D | | Repeat (stutter) |
+| F | | Try other sounds and takes in place |
+| C | | Change the selected words |
+| A / Shift+A | | Compare a change / hear the whole original song |
 | X | | Crossfade the selection together |
 | Shift+W | | Save the selection as a word |
 | Shift+R | | Restore to how it was first placed |

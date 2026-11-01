@@ -276,7 +276,7 @@ impl App {
             });
         }
         section(ui, "Worth knowing");
-        for (key, what) in [("/", "Say something"), ("⌘K", "Every command"), ("T", "Next take"), ("X", "Crossfade clips"), ("⇧W", "Save as a word"), ("Tab", "Bottom panel"), ("?", "All shortcuts")] {
+        for (key, what) in [("/", "Say something"), ("⌘K", "Every command"), ("F", "Try sounds in place"), ("C", "Change selected words"), ("A", "Compare a change"), ("X", "Crossfade clips"), ("⇧W", "Save as a word"), ("Tab", "Bottom panel"), ("?", "All shortcuts")] {
             hint_row(ui, key, what);
         }
     }

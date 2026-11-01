@@ -100,11 +100,16 @@ impl App {
     fn clip_at(&self, lanes: &[(usize, Rect)], pos: egui::Pos2, alt: bool) -> Option<(ClipId, Zone, usize)> {
         let (index, lane) = lanes.iter().find(|(_, r)| r.contains(pos))?;
         let track = &self.project.tracks[*index];
-        track
-            .clips
-            .iter()
-            .rev()
-            .find_map(|c| hit_zone(&self.arr_view, *lane, c, pos, alt).map(|z| (c.id, z, *index)))
+        // A change's clips lie on top of the recording they replace.
+        let top = track.clips.iter().rev().filter(|c| c.patch.is_some());
+        let rest = track.clips.iter().rev().filter(|c| c.patch.is_none());
+        top.chain(rest).find_map(|c| hit_zone(&self.arr_view, *lane, c, pos, alt).map(|z| (c.id, z, *index)))
+    }
+
+    fn pill_at(&self, lanes: &[(usize, Rect)], pos: egui::Pos2, painter: &egui::Painter) -> Option<mp_model::PatchId> {
+        let (index, lane) = lanes.iter().find(|(_, r)| r.contains(pos))?;
+        let track = self.project.tracks[*index].id;
+        self.change_pills(&self.arr_view, *lane, track, painter).into_iter().find(|p| p.1.contains(pos)).map(|p| p.0)
     }
 
     fn track_lanes(&mut self, ui: &mut Ui, area: Rect) {
@@ -173,6 +178,11 @@ impl App {
         // Clicks.
         if response.clicked() {
             if let Some(p) = response.interact_pointer_pos() {
+                if let Some(id) = self.pill_at(&lanes, p, ui.painter()) {
+                    self.selected_patch = Some(id);
+                    self.run(crate::actions::Action::CompareChange);
+                    return;
+                }
                 match self.clip_at(&lanes, p, false) {
                     Some((clip, _, track)) => {
                         if cmd || shift {
@@ -234,27 +244,34 @@ impl App {
             }
             painter.line_segment([lane.left_bottom(), lane.right_bottom()], Stroke::new(1.0, DIVIDER));
             let muted = track.mute || (self.project.tracks.iter().any(|t| t.solo) && !track.solo);
-            for clip in &track.clips {
-                let r = clip_rect(&view, *lane, clip);
-                if r.right() < area.left() || r.left() > area.right() {
-                    continue;
+            // The recording, then the shade over what changes hide, then the changes themselves.
+            for changes in [false, true] {
+                if changes {
+                    self.paint_change_shade(&painter, &view, *lane, track.id);
                 }
-                self.paint_clip(
-                    &painter,
-                    &view,
-                    *lane,
-                    track,
-                    clip,
-                    PaintOptions {
-                        selected: self.selection.contains(&clip.id),
-                        hovered: hover_id == Some(clip.id),
-                        show_waveform: lane.height() > 28.0,
-                        track_muted: muted,
-                    },
-                );
-                self.paint_word_labels(&painter, &view, *lane, clip);
+                for clip in track.clips.iter().filter(|c| c.patch.is_some() == changes) {
+                    let r = clip_rect(&view, *lane, clip);
+                    if r.right() < area.left() || r.left() > area.right() {
+                        continue;
+                    }
+                    self.paint_clip(
+                        &painter,
+                        &view,
+                        *lane,
+                        track,
+                        clip,
+                        PaintOptions {
+                            selected: self.selection.contains(&clip.id),
+                            hovered: hover_id == Some(clip.id),
+                            show_waveform: lane.height() > 28.0,
+                            track_muted: muted || (changes && self.project.bypass_patches),
+                        },
+                    );
+                    self.paint_word_labels(&painter, &view, *lane, clip);
+                }
             }
             self.paint_joins(&painter, &view, *lane, track);
+            self.paint_change_pills(&painter, &view, *lane, track.id);
         }
 
         // Loop region tint, snap line, marquee and playhead go over the clips.
@@ -339,6 +356,8 @@ impl App {
             ("Quantize", "Q", A::Quantize),
             ("Close gaps", "G", A::CloseGaps),
             ("Fit to tempo", "", A::FitToTempo),
+            ("Try sounds in place", "F", A::TrySounds),
+            ("Change these words", "C", A::ChangeWords),
             ("Crossfade", "X", A::Crossfade),
             ("Save as a word", "⇧W", A::SaveWord),
             ("Restore original", "⇧R", A::RestoreOriginal),

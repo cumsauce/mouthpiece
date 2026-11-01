@@ -285,10 +285,12 @@ impl Project {
                 for j in i + 1..track.clips.len() {
                     let (a, b) = (&track.clips[i], &track.clips[j]);
                     if b.start >= a.end() {
+                        // Later clips can't overlap this one, as they're sorted by start.
                         break;
                     }
                     // One clip inside another, such as a word over a whole stem, isn't a crossfade.
-                    if b.end() > a.end() && b.start > a.start {
+                    // Neither is a change over the recording it replaces.
+                    if a.patch == b.patch && b.end() > a.end() && b.start > a.start {
                         let overlap = a.end() - b.start;
                         fades_out[i] = Some(overlap);
                         fades_in[j] = Some(overlap);

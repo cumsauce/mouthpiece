@@ -1,5 +1,8 @@
 //! Mouthpiece: a sentence-mixing DAW.
 
+// On Windows, release builds shouldn't open a console window alongside the app.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 // The test script's state dump is one large JSON literal.
 #![recursion_limit = "256"]
 

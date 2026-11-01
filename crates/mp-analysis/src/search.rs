@@ -55,6 +55,23 @@ pub struct Hit {
     pub word_index: usize,
 }
 
+/// A sound to find, with what would surround it.
+#[derive(Clone, Debug, Default)]
+pub struct SoundWanted {
+    pub symbols: Vec<String>,
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub pitch_hz: Option<f32>,
+    pub length: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundCandidate {
+    pub hit: Hit,
+    pub same_before: bool,
+    pub same_after: bool,
+}
+
 struct Entry {
     source: u64,
     word_index: usize,
@@ -270,6 +287,32 @@ impl WordIndex {
         hits
     }
 
+    /// Every occurrence of a sound, best fit first, for filling a gap in a word. A sound depends on
+    /// what's around it, so ones with the same neighbours rank first, then close pitch and length.
+    pub fn sound_candidates(&self, wanted: &SoundWanted) -> Vec<SoundCandidate> {
+        let mut out: Vec<(f32, SoundCandidate)> = self
+            .find_phonemes(&wanted.symbols)
+            .into_iter()
+            .map(|hit| {
+                let word = &self.transcripts[&hit.source].words[hit.word_index];
+                let at = word.phonemes.iter().position(|p| p.start == hit.start).unwrap_or(0);
+                let after_index = at + wanted.symbols.len();
+                let same_before = wanted.before.is_some() && at > 0 && word.phonemes[at - 1].symbol == *wanted.before.as_deref().unwrap_or("");
+                let same_after = wanted.after.is_some() && word.phonemes.get(after_index).is_some_and(|p| p.symbol == *wanted.after.as_deref().unwrap_or(""));
+                let mut score = hit.confidence * 0.3 + same_before as u8 as f32 * 0.5 + same_after as u8 as f32 * 0.5;
+                if let (Some(a), Some(b)) = (wanted.pitch_hz, hit.pitch_hz) {
+                    score -= (12.0 * (b / a).log2()).abs() / 12.0 * 0.5;
+                }
+                if let Some(length) = wanted.length {
+                    score -= ((hit.end - hit.start).max(1e-3) / length.max(1e-3)).ln().abs() as f32 * 0.3;
+                }
+                (score, SoundCandidate { hit, same_before, same_after })
+            })
+            .collect();
+        out.sort_by(|a, b| b.0.total_cmp(&a.0));
+        out.into_iter().map(|(_, c)| c).collect()
+    }
+
     fn find_rhymes(&self, word: &str) -> Vec<Hit> {
         let phones = g2p::phonemes(word);
         let target = g2p::rhyme_part(&phones);
@@ -388,6 +431,29 @@ pub(crate) mod tests {
         assert_eq!(hits[0].context.as_deref(), Some("scatter"));
         assert!(hits[0].start > 0.0 && hits[0].end < 0.3);
         assert_eq!(idx.search("/sh/", 10)[0].context.as_deref(), Some("fish"));
+    }
+
+    #[test]
+    fn sounds_with_matching_neighbours_rank_first() {
+        // Wanting /ae/ after /k/: "cat" has that, "hat" doesn't.
+        let idx = index("hat cat");
+        let wanted = SoundWanted { symbols: vec!["ae".into()], before: Some("k".into()), ..Default::default() };
+        let found = idx.sound_candidates(&wanted);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].hit.context.as_deref(), Some("cat"));
+        assert!(found[0].same_before && !found[1].same_before);
+    }
+
+    #[test]
+    fn sounds_close_in_pitch_rank_first() {
+        let mut a = word("hat", 0.0, 0.9);
+        let mut b = word("mat", 1.0, 0.9);
+        a.pitch_hz = Some(440.0);
+        b.pitch_hz = Some(222.0);
+        let mut idx = WordIndex::default();
+        idx.set_transcript(1, Transcript { words: vec![a, b], model: "t".into() });
+        let wanted = SoundWanted { symbols: vec!["ae".into()], pitch_hz: Some(220.0), ..Default::default() };
+        assert_eq!(idx.sound_candidates(&wanted)[0].hit.context.as_deref(), Some("mat"));
     }
 
     #[test]

@@ -36,6 +36,10 @@ pub enum Action {
     PitchDown,
     Faster,
     Slower,
+    TrySounds,
+    ChangeWords,
+    CompareChange,
+    HearOriginal,
     RestoreOriginal,
     RevertWord,
     Group,
@@ -135,6 +139,10 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::NextTake, "Next take", key(NONE, Key::T), "Sentence mixing"),
     (Action::PrevTake, "Previous take", key(SHIFT, Key::T), "Sentence mixing"),
     (Action::Repeat, "Repeat, to stutter", key(SHIFT, Key::D), "Sentence mixing"),
+    (Action::ChangeWords, "Change the selected words", key(NONE, Key::C), "Sentence mixing"),
+    (Action::CompareChange, "Compare a change with the original", key(NONE, Key::A), "Sentence mixing"),
+    (Action::HearOriginal, "Hear the whole original song", key(SHIFT, Key::A), "Sentence mixing"),
+    (Action::TrySounds, "Try other sounds and takes in place", key(NONE, Key::F), "Sentence mixing"),
     (Action::Crossfade, "Crossfade clips together", key(NONE, Key::X), "Sentence mixing"),
     (Action::Group, "Group clips", key(CMD, Key::G), "Sentence mixing"),
     (Action::Ungroup, "Ungroup clips", key(CMD_SHIFT, Key::G), "Sentence mixing"),
@@ -308,6 +316,16 @@ impl App {
             Action::PitchDown => self.edit_selected("Pitch down", |c| c.pitch = (c.pitch - 1.0).max(-48.0)),
             Action::Faster => self.scale_selected_stretch("Speed up", 1.0 / 1.1),
             Action::Slower => self.scale_selected_stretch("Slow down", 1.1),
+            Action::TrySounds => self.open_trial(),
+            Action::ChangeWords => self.open_rewrite(),
+            Action::CompareChange => self.compare_change(),
+            Action::HearOriginal => {
+                // A listening switch rather than an edit, so it isn't an undo step.
+                self.project.bypass_patches = !self.project.bypass_patches;
+                self.needs_compile = true;
+                let text = if self.project.bypass_patches { "Playing the original song" } else { "Playing your changes" };
+                self.toast(ToastKind::Info, text);
+            }
             Action::RestoreOriginal => {
                 let ids = self.selection.clone();
                 self.edit("Restore original", |p| ids.iter().for_each(|i| p.restore_original(*i)));
@@ -461,7 +479,10 @@ impl App {
 
     fn play_from_selection(&mut self) {
         if let Some((a, _)) = self.selection_span() {
-            self.seek(a);
+            // A change is heard coming in from the song around it.
+            let in_change = self.selection.first().and_then(|c| self.project.clip(*c)).is_some_and(|c| c.patch.is_some());
+            let lead = if in_change { crate::panels::changes::PRE_ROLL } else { 0.0 };
+            self.seek((a - lead).max(0.0));
         }
         self.play_start = self.playhead;
         self.engine.audition(None);
@@ -603,6 +624,18 @@ impl App {
     fn nudge(&mut self, direction: f64) {
         let step = if self.snap { self.grid_or_small_step() } else { 0.005 };
         self.nudge_by(direction * step);
+    }
+
+    /// Flips the selected change between the original and its version, which takes effect mid-playback.
+    fn compare_change(&mut self) {
+        let from_clip = self.selection.first().and_then(|c| self.project.clip(*c)).and_then(|c| c.patch);
+        let Some(id) = from_clip.or(self.selected_patch) else {
+            self.toast(ToastKind::Info, "Select a change first");
+            return;
+        };
+        self.selected_patch = Some(id);
+        self.edit("Compare", |p| p.toggle_patch(id));
+        self.selection.retain(|c| self.project.clip(*c).is_some());
     }
 
     fn nudge_by(&mut self, step: f64) {

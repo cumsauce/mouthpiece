@@ -45,6 +45,43 @@ impl SentencePart {
     }
 }
 
+/// A stretch of words that differs between two versions of a line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WordChange {
+    pub old: std::ops::Range<usize>,
+    pub new: std::ops::Range<usize>,
+}
+
+/// What changed between two lines of words. Words kept in order aren't in the result, so that an
+/// edit only touches the words that really changed.
+pub fn diff_words(old: &[String], new: &[String]) -> Vec<WordChange> {
+    let mut lcs = vec![vec![0usize; new.len() + 1]; old.len() + 1];
+    for i in (0..old.len()).rev() {
+        for j in (0..new.len()).rev() {
+            lcs[i][j] = if old[i] == new[j] { lcs[i + 1][j + 1] + 1 } else { lcs[i + 1][j].max(lcs[i][j + 1]) };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut changes: Vec<WordChange> = Vec::new();
+    while i < old.len() || j < new.len() {
+        if i < old.len() && j < new.len() && old[i] == new[j] {
+            i += 1;
+            j += 1;
+            continue;
+        }
+        let (old_from, new_from) = (i, j);
+        while (i < old.len() || j < new.len()) && !(i < old.len() && j < new.len() && old[i] == new[j]) {
+            if j >= new.len() || (i < old.len() && lcs[i + 1][j] >= lcs[i][j + 1]) {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+        changes.push(WordChange { old: old_from..i, new: new_from..j });
+    }
+    changes
+}
+
 /// Plans a typed sentence against everything in the index.
 pub fn plan(text: &str, index: &WordIndex) -> Vec<SentencePart> {
     let words: Vec<String> = text.split_whitespace().map(normalize_word).filter(|w| !w.is_empty()).collect();
@@ -201,6 +238,23 @@ mod tests {
         let parts = plan("hello world", &idx);
         let world = parts.iter().find(|p| p.text == "world").unwrap();
         assert_eq!(world.pieces()[0].start, 2.0);
+    }
+
+    fn words(text: &str) -> Vec<String> {
+        text.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn a_diff_finds_only_the_words_that_changed() {
+        let change = diff_words(&words("the lazy dog sleeps"), &words("the crazy dog sleeps"));
+        assert_eq!(change, [WordChange { old: 1..2, new: 1..2 }]);
+        let change = diff_words(&words("the lazy dog"), &words("the dog"));
+        assert_eq!(change, [WordChange { old: 1..2, new: 1..1 }]);
+        let change = diff_words(&words("the dog"), &words("the big red dog"));
+        assert_eq!(change, [WordChange { old: 1..1, new: 1..3 }]);
+        assert!(diff_words(&words("same words"), &words("same words")).is_empty());
+        let change = diff_words(&words("one two three four"), &words("uno two three cuatro"));
+        assert_eq!(change, [WordChange { old: 0..1, new: 0..1 }, WordChange { old: 3..4, new: 3..4 }]);
     }
 
     #[test]

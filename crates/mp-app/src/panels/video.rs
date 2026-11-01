@@ -8,7 +8,13 @@ use mp_analysis::video::{PROXY_HEIGHT, PROXY_WIDTH};
 use mp_model::SourceId;
 use std::sync::atomic::Ordering;
 
-const INSTALL: &str = if cfg!(target_os = "macos") { "brew install ffmpeg" } else { "sudo apt install ffmpeg" };
+const INSTALL: &str = if cfg!(target_os = "macos") {
+    "brew install ffmpeg"
+} else if cfg!(windows) {
+    "winget install ffmpeg"
+} else {
+    "sudo apt install ffmpeg"
+};
 
 impl App {
     /// What to show now: the word being auditioned if there is one, otherwise the timeline's picture.
