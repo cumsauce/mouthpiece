@@ -276,6 +276,19 @@ pub struct StemWorker {
     pub device: String,
 }
 
+/// A cancelled or crashed worker can't clean up after itself, and leaves whole songs in the temporary folder.
+fn remove_abandoned_work() {
+    const OLD_ENOUGH: Duration = Duration::from_secs(60 * 60);
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    for entry in entries.flatten() {
+        let ours = entry.file_name().to_string_lossy().starts_with("mouthpiece-stems-");
+        let age = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+        if ours && age.is_some_and(|a| a > OLD_ENOUGH) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 /// How much of the job's progress bar each stage takes up, and what to call it.
 fn stage_span(stage: &str) -> (f32, f32, &'static str) {
     match stage {
@@ -298,6 +311,7 @@ impl StemWorker {
     /// Starts the worker, and waits until it has found out what it can run on.
     pub fn start(settings: &StemSettings, cancel: &AtomicBool) -> Result<Self, StemError> {
         std::fs::create_dir_all(stems_home()).map_err(|e| StemError::Other(e.to_string()))?;
+        remove_abandoned_work();
         let script = stems_home().join("separate.py");
         std::fs::write(&script, WORKER).map_err(|e| StemError::Other(e.to_string()))?;
         let python = std::env::var_os("MOUTHPIECE_STEMS_PYTHON").map_or_else(venv_python, PathBuf::from);
@@ -464,6 +478,12 @@ impl Drop for StemWorker {
     fn drop(&mut self) {
         // Closing stdin ends it, and frees the memory the models held.
         self.stdin = None;
+        // A moment to finish, so that it removes its temporary files. They're whole songs.
+        const GRACE: Duration = Duration::from_secs(3);
+        let waited = std::time::Instant::now();
+        while waited.elapsed() < GRACE && matches!(self.child.try_wait(), Ok(None)) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

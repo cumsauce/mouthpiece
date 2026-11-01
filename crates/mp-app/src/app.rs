@@ -150,9 +150,13 @@ pub struct App {
     autosave_busy: Arc<std::sync::atomic::AtomicBool>,
     autosave_failed: Arc<std::sync::atomic::AtomicBool>,
     autosave_warned: bool,
+    /// Whether the autosave on disk came from this session.
+    autosave_mine: bool,
     /// The output the system is using, kept up to date from another thread.
     pub system_output: Arc<parking_lot::Mutex<Option<String>>>,
     pub render_state: Option<eframe::egui_wgpu::RenderState>,
+    /// Where the window's own buttons are, for the test script.
+    pub window_buttons: Option<String>,
     /// Whether Delete means the selected track: true after clicking its header, until anything else is clicked.
     pub track_focus: bool,
     /// A track being renamed, and its name so far.
@@ -261,8 +265,10 @@ impl App {
             autosave_busy: Default::default(),
             autosave_failed: Default::default(),
             autosave_warned: false,
+            autosave_mine: false,
             system_output,
             render_state: None,
+            window_buttons: None,
             track_focus: false,
             rename_track: None,
             audition_source: None,
@@ -305,6 +311,7 @@ impl App {
                 app.import_path(path);
             }
         }
+        app.check_recovery();
         app
     }
 
@@ -849,9 +856,12 @@ impl App {
 
     /// Asks about unsaved work from a session that ended without saving, such as a crash.
     pub fn check_recovery(&mut self) {
-        if self.script.is_some() {
-            return;
+        if self.script.is_none() {
+            self.find_recovery();
         }
+    }
+
+    pub fn find_recovery(&mut self) {
         let path = self.autosave_path();
         let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
         let saved = self.project_path.as_deref().and_then(modified);
@@ -898,13 +908,22 @@ impl App {
         }
         let path = self.autosave_path();
         if !self.is_dirty() {
-            // Undone back to what's saved, so there's nothing left to recover.
-            let _ = std::fs::remove_file(&path);
+            // Undone back to what's saved, so there's nothing left to recover. Only if this session wrote
+            // it, because otherwise it's another session's work, waiting to be offered back.
+            if self.autosave_mine {
+                self.autosave_mine = false;
+                let _ = std::fs::remove_file(&path);
+            }
+            return;
+        }
+        // Waiting on an answer about the last session's work, which writing here would overwrite.
+        if self.recovery {
             return;
         }
         if self.autosave_busy.swap(true, Ordering::AcqRel) {
             return;
         }
+        self.autosave_mine = true;
         // Text here, since the project can't leave this thread. The disk is slow, so the write isn't here.
         let text = self.project.to_saved_text(path.parent());
         let (busy, failed) = (self.autosave_busy.clone(), self.autosave_failed.clone());

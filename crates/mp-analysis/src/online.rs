@@ -189,7 +189,9 @@ pub fn existing_download(dir: &Path, id: &str, kind: DownloadKind) -> Option<Pat
     };
     let tag = format!("[{id}]");
     std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| {
-        p.extension().is_some_and(|e| e == extension) && p.file_name().is_some_and(|n| n.to_string_lossy().contains(&tag))
+        // An interrupted download leaves a ".temp" file, which isn't a finished song.
+        let name = p.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        p.extension().is_some_and(|e| e == extension) && name.contains(&tag) && !name.contains(".temp.")
     })
 }
 
@@ -203,6 +205,8 @@ fn download_args(url: &str, dir: &Path, kind: DownloadKind) -> Vec<String> {
         DownloadKind::Audio => args.extend(["-f", "bestaudio/best", "-x", "--audio-format", "wav"].iter().map(|a| a.to_string())),
         DownloadKind::Video => args.extend(["-f", "bv*+ba/b", "-S", "res:1080,vcodec:h264,acodec:m4a", "--merge-output-format", "mp4"].iter().map(|a| a.to_string())),
     }
+    // A video id can start with a dash, which mustn't be read as an option.
+    args.push("--".to_string());
     args.push(url.to_string());
     args
 }
@@ -293,6 +297,8 @@ mod tests {
     fn a_previous_download_is_found_by_its_id_and_kind() {
         let dir = std::env::temp_dir().join(format!("mp-online-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Half [abc].temp.wav"), b"x").unwrap();
+        assert!(existing_download(&dir, "abc", DownloadKind::Audio).is_none(), "an interrupted download doesn't count");
         std::fs::write(dir.join("Song [abc].wav"), b"x").unwrap();
         assert!(existing_download(&dir, "abc", DownloadKind::Audio).is_some());
         assert!(existing_download(&dir, "abc", DownloadKind::Video).is_none());

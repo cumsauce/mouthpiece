@@ -63,68 +63,53 @@ fn similarity(a: &str, b: &str) -> f32 {
     1.0 - row[b.len()] as f32 / a.len().max(b.len()).max(1) as f32
 }
 
-/// Lines two word lists up, returning pairs of (heard, lyric) word positions in order.
+/// Lines two word lists up, returning pairs of (heard, lyric) word positions in order. All of both lists takes
+/// part, so that a long stretch that was misheard doesn't cut off everything after it, but either list may
+/// freely start or end with words the other lacks, such as a verse that isn't in the recording.
 fn line_up(heard: &[String], lyric: &[String]) -> Vec<(usize, usize)> {
     const GAP: f32 = -0.4;
     const SAME: f32 = 2.0;
+    const PAIR: u8 = 1;
+    const SKIP_HEARD: u8 = 2;
+    const SKIP_LYRIC: u8 = 3;
     let (n, m) = (heard.len(), lyric.len());
-    // Going from the end, so that the path can be read forwards. Either list may start or end with
-    // words the other lacks, such as a verse that isn't in the recording.
     let mut from = vec![0u8; (n + 1) * (m + 1)];
     let mut next = vec![0f32; m + 1];
     let mut row = vec![0f32; m + 1];
+    // Going from the end, so that the path can be read forwards.
+    let (mut start_i, mut start_j, mut best) = (0, 0, f32::MIN);
     for i in (0..n).rev() {
         row[m] = 0.0;
         for j in (0..m).rev() {
             let s = similarity(&heard[i], &lyric[j]);
             let pair = if s >= ALIKE { next[j + 1] + SAME * s } else { f32::MIN };
             let (skip_heard, skip_lyric) = (next[j] + GAP, row[j + 1] + GAP);
-            let best = pair.max(skip_heard).max(skip_lyric).max(0.0);
-            row[j] = best;
-            from[i * (m + 1) + j] = if best == 0.0 {
-                0
-            } else if best == pair {
-                1
-            } else if best == skip_heard {
-                2
+            let score = pair.max(skip_heard).max(skip_lyric);
+            row[j] = score;
+            from[i * (m + 1) + j] = if score == pair {
+                PAIR
+            } else if score == skip_heard {
+                SKIP_HEARD
             } else {
-                3
+                SKIP_LYRIC
             };
+            if score >= best {
+                (best, start_i, start_j) = (score, i, j);
+            }
         }
         std::mem::swap(&mut next, &mut row);
     }
-    // The best place to start, since a start that isn't the very beginning costs nothing.
-    let (mut i, mut j, mut best) = (0, 0, 0f32);
-    let mut scores = vec![0f32; 0];
-    scores.resize((n + 1) * (m + 1), 0.0);
-    for a in (0..n).rev() {
-        for b in (0..m).rev() {
-            let s = similarity(&heard[a], &lyric[b]);
-            let v = match from[a * (m + 1) + b] {
-                1 => scores[(a + 1) * (m + 1) + b + 1] + SAME * s,
-                2 => scores[(a + 1) * (m + 1) + b] + GAP,
-                3 => scores[a * (m + 1) + b + 1] + GAP,
-                _ => 0.0,
-            };
-            scores[a * (m + 1) + b] = v;
-            if v >= best {
-                best = v;
-                i = a;
-                j = b;
-            }
-        }
-    }
+    let (mut i, mut j) = (start_i, start_j);
     let mut pairs = Vec::new();
     while i < n && j < m {
         match from[i * (m + 1) + j] {
-            1 => {
+            PAIR => {
                 pairs.push((i, j));
                 i += 1;
                 j += 1;
             }
-            2 => i += 1,
-            3 => j += 1,
-            _ => break,
+            SKIP_HEARD => i += 1,
+            _ => j += 1,
         }
     }
     pairs
@@ -493,6 +478,21 @@ mod tests {
         let (segments, report) = plan(&got, &lyric("one two three four\nmissing words\nfive six seven")).unwrap();
         assert_eq!(report.left_out, 2, "a minute of gap could be anything");
         assert_eq!(words_of(&segments).len(), 7);
+    }
+
+    #[test]
+    fn a_long_misheard_stretch_does_not_cut_off_what_comes_after_it() {
+        let mut words: Vec<String> = ["hello", "there", "my", "friend"].iter().map(|w| w.to_string()).collect();
+        words.extend((0..60).map(|i| format!("xq{i}zz")));
+        words.extend(["we", "sing", "together", "now"].iter().map(|w| w.to_string()));
+        let got: Vec<HeardWord> = words.iter().enumerate().map(|(i, w)| HeardWord { text: w.clone(), start: i as f64 * 0.4, end: i as f64 * 0.4 + 0.3, confidence: 0.5 }).collect();
+        let mut text = "hello there my friend\n".to_string();
+        text.push_str(&(0..60).map(|i| format!("ab{i}cd")).collect::<Vec<_>>().join(" "));
+        text.push_str("\nwe sing together now");
+        let heard_norm: Vec<String> = got.iter().map(|w| normalize_word(&w.text)).collect();
+        let lyric_norm: Vec<String> = lyric(&text).iter().flat_map(|l| l.words.iter().map(|w| normalize_word(w))).collect();
+        let pairs = line_up(&heard_norm, &lyric_norm);
+        assert!(pairs.iter().any(|(h, _)| heard_norm[*h] == "now"), "the end got lost: {} pairs", pairs.len());
     }
 
     #[test]

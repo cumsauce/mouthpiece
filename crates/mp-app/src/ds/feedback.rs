@@ -124,12 +124,18 @@ pub fn modal(ctx: &egui::Context, name: &str, width: f32, content: impl FnOnce(&
     let mut dismissed = false;
     // With a dropdown open, Esc or a click elsewhere belongs to the dropdown, not the dialog.
     let dropdown_open = egui::Popup::is_any_open(ctx);
+    // Sharing a layer means a click on the backdrop could raise it over the dialog, which would then be stuck
+    // behind it. Dropdowns are above all this while they're open.
+    let body_id = egui::Id::unique((name, "body"));
+    if !dropdown_open {
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Foreground, body_id));
+    }
     egui::Area::new(egui::Id::unique((name, "scrim"))).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
         let response = ui.allocate_response(screen.size(), Sense::click());
         ui.painter().rect_filled(screen, 0.0, alpha(BASE, 170));
         dismissed = response.clicked();
     });
-    egui::Area::new(egui::Id::unique((name, "body")))
+    egui::Area::new(body_id)
         // The same layer as dropdowns, whose menus have to open above the dialog that holds them.
         .order(egui::Order::Foreground)
         .pivot(Align2::CENTER_CENTER)

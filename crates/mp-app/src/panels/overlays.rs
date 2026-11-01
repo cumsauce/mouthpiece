@@ -31,7 +31,8 @@ impl App {
             return;
         }
         let (mut recover, mut discard) = (false, false);
-        let dismissed = modal(ctx, "recovery", 380.0, |ui: &mut Ui| {
+        // Esc and clicking away don't answer this, as they'd leave the work to be overwritten by the next autosave.
+        modal(ctx, "recovery", 380.0, |ui: &mut Ui| {
             ui.label(heading("Recover unsaved work?"));
             ui.add_space(SP_1);
             ui.label(caption("This project has newer changes than its last save, from a session that ended without saving."));
@@ -46,9 +47,6 @@ impl App {
             self.recover_autosave();
         } else if discard {
             self.discard_recovery();
-        } else if dismissed {
-            // Not answered, so it's kept, and still in the menu.
-            self.recovery = false;
         }
     }
 

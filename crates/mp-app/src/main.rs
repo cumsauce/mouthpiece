@@ -8,6 +8,7 @@
 
 mod actions;
 mod app;
+mod chrome;
 mod ds;
 mod jobs;
 mod panels;
@@ -46,8 +47,12 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Mouthpiece")
             .with_inner_size([1480.0, 900.0])
-            .with_min_inner_size([1040.0, 640.0])
-            .with_drag_and_drop(true),
+            .with_min_inner_size([1100.0, 640.0])
+            .with_drag_and_drop(true)
+            // On macOS the top bar is the title bar. See chrome.rs. Elsewhere these do nothing.
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false),
         ..Default::default()
     };
     eframe::run_native(

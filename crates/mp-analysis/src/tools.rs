@@ -99,7 +99,15 @@ fn download(url: &str, to: &Path, cancel: &AtomicBool, on_progress: &mut dyn FnM
         }
         let n = reader.read(&mut buffer).map_err(|e| format!("Couldn't download {url}: {e}"))?;
         if n == 0 {
-            return Ok(());
+            // A dropped connection can look like a normal end, and half a program must never be run.
+            return match total {
+                Some(total) if written != total => {
+                    drop(file);
+                    let _ = std::fs::remove_file(to);
+                    Err(format!("The download of {url} was cut short. Try again."))
+                }
+                _ => Ok(()),
+            };
         }
         file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
         written += n as u64;
@@ -220,6 +228,9 @@ fn install(tool: Tool, cancel: &AtomicBool, on_progress: &mut dyn FnMut(f32)) ->
 
 /// Installs whichever of these aren't here yet. `on_progress` receives what's happening and 0..=1.
 pub fn ensure(tools: &[Tool], cancel: &AtomicBool, on_progress: &mut dyn FnMut(&str, f32)) -> Result<(), String> {
+    // A search and a split can both need ffmpeg at once, and they'd download over each other.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     for tool in tools {
         if locate(*tool).is_none() {
             let label = format!("Getting {}", tool.label());

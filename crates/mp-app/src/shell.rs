@@ -17,6 +17,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.render_state = frame.wgpu_render_state().cloned();
+        self.window_buttons = crate::chrome::place_window_buttons(&ctx, frame, TOPBAR_H);
         self.hint.clear();
         self.frame_start();
         crate::script::tick(self, &ctx);

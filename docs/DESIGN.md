@@ -302,6 +302,10 @@ Each of these was a real bug. They're easy to repeat.
 3. Add a `case` to `effect` in `mp-vfx/src/shader.wgsl`. Use only the time and parameters, never state from an earlier
    frame: preview scrubs and render jumps, and both have to give the same frame.
 
+**Keep the title bar in mind**
+On macOS the top bar is the title bar, and `chrome.rs` centres the traffic lights in it. Anything added to the bar has to leave
+`chrome::buttons_inset` free on the left, and empty parts of the bar drag the window. Other systems keep their own title bar.
+
 **Handle a mouse drag**
 Use `dragged_by(egui::PointerButton::Primary)`, and the same for `drag_started_by` and `drag_stopped_by`. egui's plain
 `dragged()` is true for every button, which is how a middle-button drag once moved clips. Timelines also call

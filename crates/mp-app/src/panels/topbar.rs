@@ -14,10 +14,12 @@ const RIGHT_W: f32 = 272.0;
 impl App {
     pub fn top_bar(&mut self, ui: &mut Ui) {
         let bar = ui.max_rect();
+        self.window_drag_area(ui, bar);
         // Centred when there's room. On narrow windows it gives way to the fixed controls on the right.
         let center_x = bar.center().x.min(bar.right() - RIGHT_W - CENTER_W * 0.5);
         let center = Rect::from_center_size(egui::pos2(center_x, bar.center().y), egui::vec2(CENTER_W, bar.height()));
-        let left = Rect::from_min_max(bar.min, egui::pos2(center.left() - SP_2, bar.bottom()));
+        let inset = crate::chrome::buttons_inset(ui.ctx());
+        let left = Rect::from_min_max(bar.min + egui::vec2(inset, 0.0), egui::pos2(center.left() - SP_2, bar.bottom()));
         let right = Rect::from_min_max(egui::pos2(center.right() + SP_2, bar.top()), bar.max);
 
         let mut left_ui = ui.new_child(egui::UiBuilder::new().max_rect(left).layout(egui::Layout::left_to_right(egui::Align::Center)));
@@ -27,6 +29,17 @@ impl App {
         self.transport_controls(&mut center_ui);
         let mut right_ui = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
         self.output_controls(&mut right_ui);
+    }
+
+    /// Lets the empty parts of the bar act as a title bar. Controls are added later, so they come first.
+    fn window_drag_area(&mut self, ui: &mut Ui, bar: Rect) {
+        let response = ui.interact(bar, ui.scope_id().with("window-drag"), Sense::click_and_drag());
+        if response.double_clicked() {
+            let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        } else if response.drag_started_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
     }
 
     fn project_controls(&mut self, ui: &mut Ui) {
