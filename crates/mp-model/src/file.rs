@@ -212,7 +212,11 @@ fn collect_file(from: &Path, media: &Path) -> std::io::Result<PathBuf> {
         if !to.exists() {
             let tmp = media.join(format!(".{name}.tmp"));
             std::fs::copy(from, &tmp)?;
-            std::fs::File::open(&tmp)?.sync_all()?;
+            // Windows can only flush a file opened for writing. A copy of a read-only file can't be opened that
+            // way, but nothing depends on it until the project is saved again, so it can go unflushed.
+            if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&tmp) {
+                file.sync_all()?;
+            }
             std::fs::rename(&tmp, &to)?;
             return Ok(to);
         }
