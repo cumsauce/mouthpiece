@@ -440,7 +440,8 @@ fn run_stems(queue: Receiver<StemRequest>) {
             result
         });
         // Cancelling kills the process, and so does running out of memory on some systems.
-        if !matches!(result, Err(StemError::Cancelled)) {
+        // A worker from a broken install goes too, so that the repaired one starts fresh.
+        if !matches!(result, Err(StemError::Cancelled | StemError::BrokenInstall(_))) {
             worker = running.map(|w| (w, settings));
         }
         reporter.send(match result {

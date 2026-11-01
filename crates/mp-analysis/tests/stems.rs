@@ -17,6 +17,8 @@ class Separator:
     def load_model(self, model_filename=None):
         if model_filename == "missing.ckpt":
             raise ValueError("Model file missing.ckpt not found")
+        if model_filename == "broken.ckpt":
+            raise ModuleNotFoundError("No module named 'audioread'")
     def separate(self, path, names):
         if open(path, "rb").read(4) == b"oom!":
             raise RuntimeError("CUDA out of memory")
@@ -88,6 +90,8 @@ fn the_worker_makes_every_stem_and_explains_failures() {
     assert!(matches!(worker.separate(&job(&gone, &settings), &cancel, &mut |_, _| {}), Err(StemError::BadInput(_))));
     let missing = StemSettings { vocal_model: "missing.ckpt".to_string(), ..settings.clone() };
     assert!(matches!(worker.separate(&job(&input, &missing), &cancel, &mut |_, _| {}), Err(StemError::MissingModel(_))));
+    let broken = StemSettings { vocal_model: "broken.ckpt".to_string(), ..settings.clone() };
+    assert!(matches!(worker.separate(&job(&input, &broken), &cancel, &mut |_, _| {}), Err(StemError::BrokenInstall(_))));
     assert!(worker.separate(&job(&input, &settings), &cancel, &mut |_, _| {}).is_ok());
 
     drop(worker);

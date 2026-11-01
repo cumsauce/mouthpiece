@@ -348,6 +348,9 @@ impl App {
         if error == StemError::Cancelled {
             return;
         }
+        if matches!(error, StemError::BrokenInstall(_)) {
+            stems::forget_install();
+        }
         match source {
             Some(source) => {
                 self.stems.dialog = Some(SplitDialog { source, setup: stems::setup(), error: Some(error) });
@@ -444,10 +447,15 @@ impl App {
             ui.label(caption(match dialog.setup {
                 Setup::Ready => "Takes minutes with a GPU, and much longer without one. The first split also downloads the models.",
                 Setup::NeedsInstall => "The first time, this gets everything it needs by itself: the separation software, its models and ffmpeg. That's several gigabytes. After that it works offline.",
+                Setup::NeedsRepair => "The separation software needs a quick repair first. This only fetches what's missing.",
             }));
             ui.add_space(SP_4);
             ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), CONTROL_H), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let label = if dialog.setup == Setup::Ready { "Split" } else { "Download and split" };
+                let label = match dialog.setup {
+                    Setup::Ready => "Split",
+                    Setup::NeedsInstall => "Download and split",
+                    Setup::NeedsRepair => "Repair and split",
+                };
                 go = ui.add(Button::primary(label)).clicked();
                 if matches!(dialog.error, Some(StemError::OutOfMemory(_))) {
                     less_memory = ui.add(Button::secondary("Split using less memory")).clicked();
@@ -461,7 +469,7 @@ impl App {
         }
         if go || less_memory {
             match dialog.setup {
-                Setup::NeedsInstall => {
+                Setup::NeedsInstall | Setup::NeedsRepair => {
                     self.stems.after_install = Some(dialog.source);
                     self.jobs.install_stems();
                 }

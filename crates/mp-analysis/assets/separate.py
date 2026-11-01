@@ -55,6 +55,8 @@ class StageError(Exception):
 def classify(error, stage):
     text = f"{type(error).__name__}: {error}"
     lower = text.lower()
+    if isinstance(error, ImportError):
+        return StageError("broken_install", text)
     if isinstance(error, MemoryError) or "out of memory" in lower or "mps backend" in lower:
         return StageError("out_of_memory", text)
     if stage.startswith("load"):

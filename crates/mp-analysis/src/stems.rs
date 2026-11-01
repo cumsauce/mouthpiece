@@ -16,6 +16,10 @@ use std::time::{Duration, SystemTime};
 const WORKER: &str = include_str!("../assets/separate.py");
 const PYTHON_FOR_UV: &str = "3.12";
 const LOG_LINES_KEPT: usize = 40;
+/// audio-separator imports audioread without declaring it, and only got it through librosa, which
+/// dropped it in 1.0. Staying below 1.0 is also what audio-separator has been built against.
+const PINNED: [&str; 2] = ["librosa<1", "audioread"];
+const INSTALL_CHECK: &str = "from audio_separator.separator import Separator; import librosa, numpy; librosa.stft(numpy.zeros(4096))";
 
 /// What's split out. Vocals, drums, bass and other make the tracks. Instrumental is a file for keeping.
 pub const STEMS: [&str; 5] = ["Vocals", "Drums", "Bass", "Other", "Instrumental"];
@@ -77,6 +81,8 @@ pub enum StemError {
     OutOfMemory(String),
     /// A model couldn't be found or downloaded.
     MissingModel(String),
+    /// Part of the separation software is missing. Installing again repairs it.
+    BrokenInstall(String),
     Other(String),
 }
 
@@ -87,6 +93,7 @@ impl StemError {
             StemError::BadInput(_) => "That file couldn't be read. It may be damaged, or in a format that isn't supported.".to_string(),
             StemError::OutOfMemory(_) => "This ran out of memory. Close other apps, or try again using less memory.".to_string(),
             StemError::MissingModel(detail) => format!("The model couldn't be loaded or downloaded. Check your connection and the model's name. {}", last_line(detail)),
+            StemError::BrokenInstall(detail) => format!("Part of the separation software is missing, and it can be repaired. {}", last_line(detail)),
             StemError::Other(detail) => format!("Splitting failed. {}", last_line(detail)),
         }
     }
@@ -114,12 +121,35 @@ pub enum Setup {
     Ready,
     /// The first split has to download the separation software.
     NeedsInstall,
+    /// It's here but incomplete or out of date, which only needs what's missing.
+    NeedsRepair,
 }
 
 /// Whether splitting can run now.
 pub fn setup() -> Setup {
-    let installed = marker().is_file() && venv_python().is_file() && tools::locate(Tool::Ffmpeg).is_some();
-    if std::env::var_os("MOUTHPIECE_STEMS_PYTHON").is_some() || installed { Setup::Ready } else { Setup::NeedsInstall }
+    if std::env::var_os("MOUTHPIECE_STEMS_PYTHON").is_some() {
+        return Setup::Ready;
+    }
+    let record = std::fs::read_to_string(marker()).ok();
+    setup_state(venv_python().is_file(), record.as_deref(), &install_record(), tools::locate(Tool::Ffmpeg).is_some())
+}
+
+fn setup_state(has_environment: bool, record: Option<&str>, wanted: &str, has_ffmpeg: bool) -> Setup {
+    match has_environment {
+        false => Setup::NeedsInstall,
+        true if record == Some(wanted) && has_ffmpeg => Setup::Ready,
+        true => Setup::NeedsRepair,
+    }
+}
+
+/// Makes the next split repair the install, after finding something missing from it.
+pub fn forget_install() {
+    let _ = std::fs::remove_file(marker());
+}
+
+/// What an install consists of. A change here makes existing installs repair themselves.
+fn install_record() -> String {
+    std::iter::once(package()).chain(PINNED).collect::<Vec<_>>().join(" ")
 }
 
 fn package() -> &'static str {
@@ -158,25 +188,32 @@ fn run_step(mut command: Command, cancel: &AtomicBool) -> Result<(), StemError> 
     }
 }
 
-/// Gets everything splitting needs, including uv and ffmpeg if they aren't here. This downloads several gigabytes.
+/// Gets everything splitting needs, including uv and ffmpeg if they aren't here. A first install downloads
+/// several gigabytes. A repair keeps what's there and only fetches what's missing.
 pub fn install(cancel: &AtomicBool, on_progress: &mut dyn FnMut(&str, f32)) -> Result<(), StemError> {
     let failed = |e: String| if e == "cancelled" { StemError::Cancelled } else { StemError::Other(e) };
     tools::ensure(&[Tool::Ffmpeg, Tool::Uv], cancel, on_progress).map_err(failed)?;
-    if marker().is_file() && venv_python().is_file() {
-        return Ok(());
-    }
     let uv = tools::locate(Tool::Uv).ok_or_else(|| StemError::Other("uv isn't installed".to_string()))?;
     let venv = stems_home().join("venv");
     std::fs::create_dir_all(stems_home()).map_err(|e| StemError::Other(e.to_string()))?;
-    let spec = package();
     on_progress("Getting the stem splitter", 0.0);
-    let mut make = Command::new(&uv);
-    make.args(["venv", "--clear", "--python", PYTHON_FOR_UV]).arg(&venv);
-    run_step(make, cancel)?;
+    if !venv_python().is_file() {
+        let mut make = Command::new(&uv);
+        make.args(["venv", "--clear", "--python", PYTHON_FOR_UV]).arg(&venv);
+        run_step(make, cancel)?;
+    }
     let mut add = Command::new(&uv);
-    add.args(["pip", "install", "--python"]).arg(venv_python()).arg(spec);
+    add.args(["pip", "install", "--python"]).arg(venv_python()).arg(package()).args(PINNED);
     run_step(add, cancel)?;
-    std::fs::write(marker(), spec).map_err(|e| StemError::Other(e.to_string()))
+    // Only trust an install that has actually loaded. A package going missing upstream shows up here.
+    on_progress("Checking the stem splitter", 1.0);
+    let mut check = Command::new(venv_python());
+    check.args(["-c", INSTALL_CHECK]);
+    run_step(check, cancel).map_err(|e| match e {
+        StemError::Other(detail) => StemError::BrokenInstall(detail),
+        other => other,
+    })?;
+    std::fs::write(marker(), install_record()).map_err(|e| StemError::Other(e.to_string()))
 }
 
 fn folder_beside(input: &Path) -> (Option<PathBuf>, PathBuf) {
@@ -406,6 +443,7 @@ impl StemWorker {
                         Some("bad_input") => StemError::BadInput(message),
                         Some("out_of_memory") => StemError::OutOfMemory(message),
                         Some("missing_model") => StemError::MissingModel(message),
+                        Some("broken_install") => StemError::BrokenInstall(message),
                         _ => StemError::Other(message),
                     }))
                 }
@@ -438,6 +476,15 @@ mod tests {
         assert_eq!(tqdm_percent(" 42%|████      | 10/24 [00:01<00:02]"), Some(42.0));
         assert_eq!(tqdm_percent("100%|██████████|"), Some(100.0));
         assert_eq!(tqdm_percent("INFO: loading 12% of nothing"), None);
+    }
+
+    #[test]
+    fn an_old_or_incomplete_install_repairs_rather_than_starting_over() {
+        assert_eq!(setup_state(false, None, "a", true), Setup::NeedsInstall);
+        assert_eq!(setup_state(true, Some("a"), "a", true), Setup::Ready);
+        assert_eq!(setup_state(true, Some("old"), "a", true), Setup::NeedsRepair);
+        assert_eq!(setup_state(true, None, "a", true), Setup::NeedsRepair);
+        assert_eq!(setup_state(true, Some("a"), "a", false), Setup::NeedsRepair);
     }
 
     #[test]
