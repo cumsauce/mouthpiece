@@ -124,6 +124,11 @@ fn real_models_make_five_stems_of_the_same_length() {
 
     let settings = StemSettings { format: StemFormat::Wav, ..Default::default() };
     let cancel = AtomicBool::new(false);
+    mp_analysis::tools::init();
+    if mp_analysis::stems::setup() != mp_analysis::stems::Setup::Ready {
+        println!("installing");
+        mp_analysis::stems::install(&cancel, &mut |label, p| println!("{:3.0}% {label}", p * 100.0)).unwrap();
+    }
     let mut worker = StemWorker::start(&settings, &cancel).unwrap();
     println!("running on {}", worker.device);
     let files = worker.separate(&job(&input, &settings), &cancel, &mut |p, s| println!("{:3.0}% {s}", p * 100.0)).unwrap();

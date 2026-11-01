@@ -122,13 +122,16 @@ pub fn paint_progress(ui: &Ui, rect: egui::Rect, fraction: Option<f32>) {
 pub fn modal(ctx: &egui::Context, name: &str, width: f32, content: impl FnOnce(&mut Ui)) -> bool {
     let screen = ctx.content_rect();
     let mut dismissed = false;
+    // With a dropdown open, Esc or a click elsewhere belongs to the dropdown, not the dialog.
+    let dropdown_open = egui::Popup::is_any_open(ctx);
     egui::Area::new(egui::Id::unique((name, "scrim"))).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
         let response = ui.allocate_response(screen.size(), Sense::click());
         ui.painter().rect_filled(screen, 0.0, alpha(BASE, 170));
         dismissed = response.clicked();
     });
     egui::Area::new(egui::Id::unique((name, "body")))
-        .order(egui::Order::Tooltip)
+        // The same layer as dropdowns, whose menus have to open above the dialog that holds them.
+        .order(egui::Order::Foreground)
         .pivot(Align2::CENTER_CENTER)
         .fixed_pos(screen.center())
         .show(ctx, |ui| {
@@ -143,5 +146,5 @@ pub fn modal(ctx: &egui::Context, name: &str, width: f32, content: impl FnOnce(&
                     content(ui);
                 });
         });
-    dismissed || ctx.input(|i| i.key_pressed(egui::Key::Escape))
+    !dropdown_open && (dismissed || ctx.input(|i| i.key_pressed(egui::Key::Escape)))
 }

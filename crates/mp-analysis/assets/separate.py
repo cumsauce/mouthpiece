@@ -68,6 +68,8 @@ def classify(error, stage):
 
 class Pipeline:
     def __init__(self, model_dir):
+        # audio-separator won't create this itself, and fails on the first download without it.
+        os.makedirs(model_dir, exist_ok=True)
         self.model_dir = model_dir
         self.separators = {}
         self.work = tempfile.mkdtemp(prefix="mouthpiece-stems-")
