@@ -29,7 +29,8 @@ crates/
   mp-dsp       Pure DSP: filters, dynamics, delay, reverb, resampling, stretch, YIN pitch.
   mp-engine    Real-time graph, Device trait (CLAP-shaped), cpal output, offline render.
   mp-analysis  Decode, peaks, spectrogram, BPM/beat/key, Whisper, G2P, phoneme alignment, search.
-  mp-export    MP3 (LAME) and WAV encoders.
+  mp-export    MP3 (LAME) and WAV encoders, and video through ffmpeg.
+  mp-vfx       GPU picture effects (wgpu), shared by preview and video render.
   mp-app       egui UI: arranger, editor, devices, word browser, sentence builder.
 ```
 

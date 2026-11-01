@@ -14,6 +14,7 @@ mp-dsp.workspace = true
 mp-engine.workspace = true
 mp-analysis.workspace = true
 mp-export.workspace = true
+mp-vfx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true

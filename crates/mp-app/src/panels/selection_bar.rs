@@ -81,7 +81,7 @@ impl App {
         if ui.add(IconButton::new(Icon::Repeat, "Repeat, to stutter").shortcut("⇧D").small()).clicked() {
             self.run(Action::Repeat);
         }
-        if ui.add(IconButton::new(Icon::Split, "Split at the playhead").shortcut("S").small()).clicked() {
+        if ui.add(IconButton::new(Icon::Split, "Split at the playhead").shortcut("⌘E").small()).clicked() {
             self.run(Action::Split);
         }
         if count > 1 && ui.add(IconButton::new(Icon::Wand, "Close the gaps").shortcut("G").small()).clicked() {

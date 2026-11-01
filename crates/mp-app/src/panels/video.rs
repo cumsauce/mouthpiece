@@ -3,7 +3,7 @@
 
 use crate::app::App;
 use crate::ds::*;
-use eframe::egui::{self, Rect, Sense, Ui};
+use eframe::egui::{self, Sense, Ui};
 use mp_analysis::video::{PROXY_HEIGHT, PROXY_WIDTH};
 use mp_model::SourceId;
 use std::sync::atomic::Ordering;
@@ -18,7 +18,7 @@ const INSTALL: &str = if cfg!(target_os = "macos") {
 
 impl App {
     /// What to show now: the word being auditioned if there is one, otherwise the timeline's picture.
-    fn current_picture(&self) -> Option<(SourceId, f64)> {
+    pub fn current_picture(&self) -> Option<(SourceId, f64)> {
         let shared = &self.engine.shared;
         if shared.audition_total.load(Ordering::Relaxed) > 0 {
             if let Some((source, from)) = self.audition_source {
@@ -50,22 +50,20 @@ impl App {
             ui.add_space(SP_2);
             return;
         }
+        // When large, it's above the arrangement instead.
+        if self.picture.large {
+            return;
+        }
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, width * PROXY_HEIGHT as f32 / PROXY_WIDTH as f32), Sense::hover());
-        ui.painter().rect_filled(rect, R_S, BASE);
-        if let Some((source, seconds)) = self.current_picture() {
-            self.update_video_texture(ui, source, seconds);
-        } else {
-            self.video_frame = None;
-        }
-        if let (Some(texture), Some(_)) = (&self.video_texture, self.video_frame) {
-            let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-            ui.painter().image(texture.id(), rect, uv, egui::Color32::WHITE);
-        }
+        let render_state = self.render_state.clone();
+        self.draw_picture(ui, rect, render_state.as_ref());
+        self.picture_handles(ui, rect);
+        self.large_toggle(ui, rect);
         ui.add_space(SP_2);
     }
 
-    fn update_video_texture(&mut self, ui: &Ui, source: SourceId, seconds: f64) {
+    pub fn update_video_texture(&mut self, ui: &Ui, source: SourceId, seconds: f64) {
         let Some(proxy) = self.video.get(&source) else { return };
         let Some(index) = proxy.frame_index(seconds) else { return };
         if self.video_frame == Some((source, index)) {

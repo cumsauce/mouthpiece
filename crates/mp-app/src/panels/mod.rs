@@ -8,6 +8,7 @@ pub mod inspector;
 pub mod lane;
 pub mod mixer;
 pub mod overlays;
+pub mod picture;
 pub mod palette;
 pub mod render;
 pub mod say;

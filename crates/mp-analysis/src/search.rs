@@ -105,14 +105,6 @@ impl WordIndex {
         self.entries.len()
     }
 
-    /// Distinct words with their take counts, most frequent first.
-    pub fn vocabulary(&self) -> Vec<(String, usize)> {
-        let mut v: Vec<(String, usize)> =
-            self.by_word.iter().map(|(w, e)| (w.clone(), e.len())).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        v
-    }
-
     fn rebuild(&mut self) {
         self.entries.clear();
         self.by_word.clear();

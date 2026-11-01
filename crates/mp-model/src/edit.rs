@@ -31,12 +31,15 @@ impl Project {
             height: 76.0,
             clips: Vec::new(),
             devices: Vec::new(),
+            picture: Vec::new(),
         });
         id
     }
 
+    /// Removes a track, along with any changes on it.
     pub fn remove_track(&mut self, id: TrackId) {
         self.tracks.retain(|t| t.id != id);
+        self.patches.retain(|p| p.track != id);
     }
 
     pub fn add_source(&mut self, path: PathBuf, name: String, duration: Seconds, kind: TrackKind) -> SourceId {

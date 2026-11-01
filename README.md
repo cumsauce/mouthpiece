@@ -56,7 +56,9 @@ makes the same packages that CI does, in `dist/`.
 4. **Try other takes** with `T`, right on the timeline. Each word stays where it is.
 5. **Shape it:** split, reverse, stretch, repitch, stutter, and tune words to the song's key. The bar that
    appears over a selection has the common ones.
-6. **Render** with `⌘R`, to MP3 or WAV.
+6. **Add picture effects,** if your source is a video. Devices has a Sound and a Picture chain. Any knob can
+   have keyframes, pulse on the beat, or follow a track's level, and effects can be limited to an area.
+7. **Render** with `⇧⌘R`, to MP3, WAV or MP4.
 
 | Type | To get |
 |---|---|

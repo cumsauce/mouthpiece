@@ -12,8 +12,8 @@ pub fn is_video_path(path: &Path) -> bool {
 }
 
 /// Preview frames are kept small and in memory, so that scrubbing and cutting never wait on the disk.
-pub const PROXY_WIDTH: usize = 240;
-pub const PROXY_HEIGHT: usize = 135;
+pub const PROXY_WIDTH: usize = 320;
+pub const PROXY_HEIGHT: usize = 180;
 pub const PROXY_FPS: f64 = 10.0;
 
 /// A low-resolution copy of a video, as tightly packed RGB frames.

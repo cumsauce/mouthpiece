@@ -19,6 +19,8 @@ pub enum Unit {
     Percent,
     Ratio,
     Beats,
+    Degrees,
+    Times,
     None,
 }
 
@@ -72,6 +74,8 @@ impl ParamInfo {
             Unit::Ratio => format!("{v:.1}:1"),
             Unit::Beats if v < 0.001 => "Free".to_string(),
             Unit::Beats => format!("{v:.2} beats"),
+            Unit::Degrees => format!("{v:.0}°"),
+            Unit::Times => format!("{v:.2}×"),
             Unit::None => format!("{v:.2}"),
         }
     }

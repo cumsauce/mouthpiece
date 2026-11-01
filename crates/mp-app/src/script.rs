@@ -175,6 +175,7 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
         }
         "resize" => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(numbers[0], numbers[1]))),
         "seek" => app.seek(numbers[0] as f64),
+        "recipe" => app.add_recipe_number(usizes[0]),
         "range" => app.editor.range = Some((numbers[0] as f64, numbers[1] as f64)),
         "import" => app.import_path(rest.into()),
         "drop" => app.script_dropped.push(Arc::new(ScriptDrop(rest.into()))),
@@ -191,7 +192,13 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
         }
         "transcript" => inject_transcript(app, rest),
         "export" => {
-            let format = if rest.ends_with(".wav") { Format::Wav24 } else { Format::Mp3 { kbps: 320 } };
+            let format = if rest.ends_with(".wav") {
+                Format::Wav24
+            } else if rest.ends_with(".mp4") {
+                Format::Mp4 { height: 360 }
+            } else {
+                Format::Mp3 { kbps: 320 }
+            };
             app.start_export(rest.into(), format, RangeChoice::Project, 0.5, "Script".to_string());
         }
         "save" => app.save_to(std::path::Path::new(rest)),

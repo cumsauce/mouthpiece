@@ -36,5 +36,6 @@ cargo test -p mp-export --test sentence_e2e -- --ignored --nocapture
 - `mp-dsp`: signal processing.
 - `mp-engine`: the real-time graph and offline render, which share one code path.
 - `mp-analysis`: decoding, tempo, key, Whisper, alignment, search.
-- `mp-export`: MP3 and WAV.
+- `mp-export`: MP3, WAV and video through ffmpeg.
+- `mp-vfx`: GPU picture effects. Preview and video render share it, so effects must be stateless.
 - `mp-app`: the interface. `ds/` is the design system, `panels/` the screens, `actions.rs` the commands.

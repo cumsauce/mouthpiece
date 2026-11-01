@@ -62,11 +62,9 @@ impl App {
         ui.horizontal(|ui| {
             ui.add_space(SP_2);
             tabs(ui, &mut self.bottom_tab, &[(BottomTab::Editor, "Editor"), (BottomTab::Devices, "Devices"), (BottomTab::Mixer, "Mixer")]);
-            ui.add_space(SP_3);
-            match self.bottom_tab {
-                BottomTab::Editor => self.editor_toolbar(ui),
-                BottomTab::Devices => self.devices_toolbar(ui),
-                BottomTab::Mixer => {}
+            // Controls keep to the far side, so that the tab row reads as only tabs.
+            if self.bottom_tab == BottomTab::Editor {
+                right_aligned(ui, "editor-toolbar", |ui| self.editor_toolbar(ui));
             }
         });
         ui.add_space(SP_1);

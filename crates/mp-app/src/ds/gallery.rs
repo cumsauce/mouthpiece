@@ -47,7 +47,7 @@ pub fn show(ui: &mut Ui, s: &mut GalleryState) {
                     Icon::Play, Icon::Pause, Icon::ToStart, Icon::Loop, Icon::Metronome, Icon::Magnet, Icon::Plus, Icon::Minus,
                     Icon::Close, Icon::Search, Icon::Power, Icon::Reverse, Icon::Undo, Icon::Redo, Icon::PanelLeft, Icon::PanelBottom,
                     Icon::PanelRight, Icon::ChevronLeft, Icon::ChevronRight, Icon::ChevronDown, Icon::Repeat, Icon::Split, Icon::Trash,
-                    Icon::Wand, Icon::Note, Icon::Faster, Icon::Slower, Icon::Commands, Icon::Check, Icon::Crossfade, Icon::Link, Icon::Bookmark, Icon::Restore, Icon::Compare,
+                    Icon::Wand, Icon::Note, Icon::Faster, Icon::Slower, Icon::Commands, Icon::Check, Icon::Crossfade, Icon::Link, Icon::Bookmark, Icon::Restore, Icon::Compare, Icon::Keyframe, Icon::Expand,
                 ] {
                     ui.add(IconButton::new(icon, "Tooltip").shortcut("⌘K"));
                 }

@@ -11,11 +11,46 @@ impl App {
         self.render_modal(ctx);
         self.discard_modal(ctx);
         self.word_modal(ctx);
+        self.rename_track_modal(ctx);
         if self.palette_open {
             self.palette(ctx);
         }
         if self.show_shortcuts {
             self.shortcuts_modal(ctx);
+        }
+    }
+
+    fn rename_track_modal(&mut self, ctx: &egui::Context) {
+        let Some((track, mut name, mut focused)) = self.rename_track.take() else { return };
+        let mut confirm = false;
+        let mut cancel = false;
+        let dismissed = modal(ctx, "rename-track", 300.0, |ui: &mut Ui| {
+            ui.label(heading("Rename track"));
+            ui.add_space(SP_3);
+            let id = egui::Id::unique("track-name");
+            let edit = egui::Frame::NONE.fill(BASE).corner_radius(R_S).inner_margin(egui::Margin::same(SP_2 as i8)).show(ui, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut name).id(id).frame(egui::Frame::NONE).font(font_input()).desired_width(f32::INFINITY))
+            }).inner;
+            if !focused {
+                edit.request_focus();
+                focused = true;
+            }
+            confirm = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.add_space(SP_4);
+            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), CONTROL_H), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                confirm |= ui.add(Button::primary("Rename").enabled(!name.trim().is_empty())).clicked();
+                cancel = ui.add(Button::ghost("Cancel")).clicked();
+            });
+        });
+        let trimmed = name.trim().to_string();
+        if confirm && !trimmed.is_empty() {
+            self.edit("Rename track", |p| {
+                if let Some(t) = p.track_mut(track) {
+                    t.name = trimmed;
+                }
+            });
+        } else if !dismissed && !cancel {
+            self.rename_track = Some((track, name, focused));
         }
     }
 

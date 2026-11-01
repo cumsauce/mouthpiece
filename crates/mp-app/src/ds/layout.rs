@@ -56,6 +56,16 @@ pub fn info_row(ui: &mut Ui, label: &str, value: &str) {
 }
 
 /// A thin line between groups inside a bar or a panel.
+/// Lays out a row against the right edge, in reading order. It uses last frame's width, since a
+/// row's width is only known after drawing it.
+pub fn right_aligned(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
+    let key = ui.make_persistent_id(id);
+    let last: f32 = ui.data(|d| d.get_temp(key)).unwrap_or(0.0);
+    ui.add_space((ui.available_width() - last - SP_2).max(SP_3));
+    let row = ui.horizontal(add);
+    ui.data_mut(|d| d.insert_temp(key, row.response.rect.width()));
+}
+
 pub fn divider_v(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(SP_2 + 1.0, CONTROL_SM), egui::Sense::hover());
     ui.painter().vline(rect.center().x, rect.y_range(), egui::Stroke::new(1.0, BORDER));

@@ -40,6 +40,8 @@ pub struct SayState {
     pub word_selection: Option<(SourceId, usize, usize)>,
     /// The last thing tried, for comparing with what was there.
     pub trial_last: Option<usize>,
+    /// Lines placed this session, newest first.
+    pub recent: Vec<String>,
     similar: (String, Vec<String>),
 }
 
@@ -59,10 +61,19 @@ impl Default for SayState {
             rewrite: None,
             word_selection: None,
             trial_last: None,
+            recent: Vec::new(),
             similar: (String::new(), Vec::new()),
         }
     }
 }
+
+const TYPING_HINTS: [(&str, &str); 4] = [
+    ("hello", "every take of a word"),
+    ("hello world", "a whole line"),
+    ("/k ae t/", "a sound, even inside words"),
+    ("~cat", "words that rhyme"),
+];
+const RECENT_LINES: usize = 8;
 
 const ROW_H: f32 = 50.0;
 const RESULT_LIMIT: usize = 300;
@@ -292,26 +303,31 @@ impl App {
                     hint_row(ui, "Space", "Hear that line with the music");
                     ui.add_space(SP_2);
                 }
-                ui.label(caption(format!("{} words to work with. Click to add one.", self.index.word_count())));
+                let count = self.index.word_count();
+                ui.label(caption(format!("{count} word{} ready. Type a line, or find one in the lyrics.", if count == 1 { "" } else { "s" })));
                 ui.add_space(SP_1);
-                let vocabulary = self.index.vocabulary();
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(SP_HALF + 1.0, SP_HALF + 1.0);
-                    for (word, count) in vocabulary {
-                        let label = if count > 1 { format!("{word} {count}") } else { word.clone() };
-                        if ui.add(Button::ghost(&label).small()).clicked() {
-                            self.append_to_line(&word);
+                if ui.add(Button::secondary("Read the lyrics").small()).clicked() {
+                    self.say.tab = SayTab::Lyrics;
+                }
+                ui.add_space(SP_3);
+                if self.say.recent.is_empty() {
+                    section(ui, "What you can type");
+                    for (query, what) in TYPING_HINTS {
+                        hint_row(ui, query, what);
+                    }
+                } else {
+                    section(ui, "Recent lines");
+                    for line in self.say.recent.clone() {
+                        if ui.add(Button::ghost(&truncate(&line, 40)).small().tip("Use this line again", None)).clicked() {
+                            self.say.text = line;
+                            self.say.dirty = true;
+                            self.say.focus_input = true;
                         }
                     }
-                });
+                }
             } else {
                 section(ui, "What you can type");
-                for (query, what) in [
-                    ("hello", "every take of a word"),
-                    ("hello world", "a whole line"),
-                    ("/k ae t/", "a sound, even inside words"),
-                    ("~cat", "words that rhyme"),
-                ] {
+                for (query, what) in TYPING_HINTS {
                     hint_row(ui, query, what);
                 }
             }
@@ -795,6 +811,10 @@ impl App {
         }
         self.after_place(&clips, track);
         self.toast_with(ToastKind::Good, format!("Placed {count} clip{}", if count == 1 { "" } else { "s" }), ToastAction::Undo);
+        let line = self.say.text.trim().to_string();
+        self.say.recent.retain(|l| *l != line);
+        self.say.recent.insert(0, line);
+        self.say.recent.truncate(RECENT_LINES);
         self.say.text.clear();
         self.say.dirty = true;
         self.say.focus_input = true;

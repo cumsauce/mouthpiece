@@ -200,6 +200,7 @@ impl App {
                     }
                     None => {
                         self.selection.clear();
+                        self.track_focus = false;
                         if let Some(track) = self.track_index_at(&lanes, p.y) {
                             self.selected_track = Some(self.project.tracks[track].id);
                             self.master_selected = false;
@@ -344,7 +345,7 @@ impl App {
     pub fn clip_context_menu(&mut self, ui: &mut Ui) {
         use crate::actions::Action as A;
         let items = [
-            ("Split at playhead", "S", A::Split),
+            ("Split at playhead", "⌘E", A::Split),
             ("Duplicate", "⌘D", A::Duplicate),
             ("Delete", "⌫", A::Delete),
             ("Next take", "T", A::NextTake),
@@ -422,6 +423,7 @@ impl App {
             self.selected_track = Some(track.id);
             self.master_selected = false;
             self.selection.clear();
+            self.track_focus = true;
         }
         if back.double_clicked() {
             self.open_track_in_editor(track.id);
@@ -479,7 +481,7 @@ impl App {
                 content.label(caption(format!("Transcribing {:.0}%", fraction.unwrap_or(0.0) * 100.0)));
                 progress(&mut content, fraction, inner.width());
             } else if let Some(words) = words {
-                content.label(caption(format!("{} · {words} words", track.kind.label())));
+                content.label(caption(format!("{} · {words} word{}", track.kind.label(), if words == 1 { "" } else { "s" })));
             } else {
                 content.label(caption(track.kind.label()));
             }
@@ -531,7 +533,7 @@ impl App {
             self.edit("Move track", |p| p.tracks.swap(position, position + 1));
             ui.close();
         }
-        if menu_item(ui, "Delete track", Some("⌘⌫")).clicked() {
+        if menu_item(ui, "Delete track", Some("⌫")).clicked() {
             self.selected_track = Some(track);
             self.run(crate::actions::Action::DeleteTrack);
             ui.close();

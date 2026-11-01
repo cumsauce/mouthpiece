@@ -6,6 +6,7 @@
 mod edit;
 mod history;
 mod patches;
+pub mod picture;
 pub mod video;
 
 pub use history::History;
@@ -162,6 +163,9 @@ pub struct Track {
     pub height: f32,
     pub clips: Vec<Clip>,
     pub devices: Vec<DeviceInstance>,
+    /// Effects on this track's picture, the visual counterpart of `devices`.
+    #[serde(default)]
+    pub picture: Vec<picture::PictureEffect>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -343,6 +347,8 @@ impl DeviceKind {
 pub struct Master {
     pub gain_db: f32,
     pub devices: Vec<DeviceInstance>,
+    #[serde(default)]
+    pub picture: Vec<picture::PictureEffect>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -362,7 +368,7 @@ impl Default for Project {
             key: None,
             tracks: Vec::new(),
             sources: Vec::new(),
-            master: Master { gain_db: 0.0, devices: Vec::new() },
+            master: Master { gain_db: 0.0, devices: Vec::new(), picture: Vec::new() },
             loop_region: LoopRegion { start: 0.0, end: 8.0, enabled: false },
             metronome: false,
             words: Vec::new(),

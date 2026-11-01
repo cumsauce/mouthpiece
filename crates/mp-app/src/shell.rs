@@ -14,8 +14,9 @@ impl eframe::App for App {
         }
     }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.render_state = frame.wgpu_render_state().cloned();
         self.hint.clear();
         self.frame_start();
         crate::script::tick(self, &ctx);
@@ -50,6 +51,10 @@ impl eframe::App for App {
         if self.show_say {
             egui::Panel::right("say").frame(panel_frame()).resizable(true).default_size(310.0).size_range(260.0..=520.0).show(ui, |ui| self.say_panel(ui));
         }
+        if self.picture.large && self.show_video && self.project.has_video() {
+            let render_state = self.render_state.clone();
+            egui::Panel::top("stage").frame(egui::Frame::NONE.fill(BASE)).resizable(true).default_size(340.0).size_range(160.0..=720.0).show(ui, |ui| self.picture_stage(ui, render_state.as_ref()));
+        }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BASE)).show(ui, |ui| self.arranger(ui));
 
         self.selection_bar(&ctx);
@@ -75,7 +80,7 @@ impl eframe::App for App {
 
 impl App {
     pub fn any_modal_open(&self) -> bool {
-        self.palette_open || self.show_shortcuts || self.export_dialog.is_some() || self.pending_discard.is_some() || self.word_dialog.is_some()
+        self.palette_open || self.show_shortcuts || self.export_dialog.is_some() || self.pending_discard.is_some() || self.word_dialog.is_some() || self.rename_track.is_some()
     }
 
     fn handle_drops(&mut self, ctx: &egui::Context) {

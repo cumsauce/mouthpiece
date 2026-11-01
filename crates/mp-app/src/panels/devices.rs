@@ -2,6 +2,8 @@
 
 use crate::app::App;
 use crate::ds::*;
+use crate::panels::arranger::truncate;
+use crate::panels::picture::ChainMode;
 use eframe::egui::{self, Color32, Sense, Shape, Stroke, Ui};
 use mp_dsp::filter;
 use mp_engine::devices::{params_of, EQ_BANDS};
@@ -23,39 +25,87 @@ impl App {
         if self.master_selected { None } else { self.selected_track }
     }
 
-    pub fn devices_toolbar(&mut self, ui: &mut Ui) {
+    /// The chain's own controls. These live inside the panel, so they can't be mistaken for its tabs.
+    fn chain_rail(&mut self, ui: &mut Ui) {
+        let width = ui.available_width();
+        ui.add_space(SP_1);
+        ui.label(caption("Chain on"));
         let name = if self.master_selected {
             "Master".to_string()
         } else {
-            self.selected_track.and_then(|t| self.project.track(t)).map_or("No track selected".to_string(), |t| t.name.clone())
+            self.selected_track.and_then(|t| self.project.track(t)).map_or("Choose a track".to_string(), |t| truncate(&t.name, 16))
         };
-        ui.label(strong(name));
-        ui.add_space(SP_2);
-        if ui.add(Button::ghost("Master").small().active(self.master_selected).tip("Show the master chain", None)).clicked() {
-            self.master_selected = !self.master_selected;
-        }
-        menu_button(ui, "Add device", |ui| {
-            for kind in ADDABLE {
-                if menu_item(ui, kind.name(), None).clicked() {
-                    self.add_device(kind);
+        let tracks: Vec<(TrackId, String)> = self.project.tracks.iter().map(|t| (t.id, t.name.clone())).collect();
+        dropdown(ui, "chain-target", name, width - SP_2, |ui| {
+            for (id, name) in &tracks {
+                if menu_item(ui, name, None).clicked() {
+                    self.selected_track = Some(*id);
+                    self.master_selected = false;
                     ui.close();
                 }
             }
+            menu_separator(ui);
+            if menu_item(ui, "Master", None).clicked() {
+                self.master_selected = true;
+                ui.close();
+            }
         });
+        ui.add_space(SP_2);
+        segmented(ui, &mut self.picture.mode, &[(ChainMode::Sound, "Sound"), (ChainMode::Picture, "Picture")]);
+        ui.add_space(SP_2);
+        match self.picture.mode {
+            ChainMode::Sound => menu_button(ui, "Add device", |ui| {
+                for kind in ADDABLE {
+                    if menu_item(ui, kind.name(), None).clicked() {
+                        self.add_device(kind);
+                        ui.close();
+                    }
+                }
+            }),
+            ChainMode::Picture => {
+                menu_button(ui, "Add effect", |ui| self.add_picture_menu(ui));
+                let shown = self.chain_target().and_then(|t| self.project.track(t)).is_none_or(|t| {
+                    t.clips.iter().any(|c| self.project.source(c.source).is_some_and(|s| s.has_video))
+                });
+                ui.add_space(SP_2);
+                if !self.project.has_video() {
+                    ui.label(caption("Add a video to see these."));
+                } else if !shown {
+                    ui.label(caption("This track has no video. Master applies to the whole picture."));
+                }
+            }
+        }
     }
 
     pub fn devices_panel(&mut self, ui: &mut Ui) {
+        const RAIL_W: f32 = 148.0;
+        let full = ui.available_rect_before_wrap();
+        ui.allocate_rect(full, Sense::hover());
+        let rail = egui::Rect::from_min_max(full.min + egui::vec2(SP_2, 0.0), egui::pos2(full.left() + SP_2 + RAIL_W, full.bottom() - SP_1));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rail).layout(egui::Layout::top_down(egui::Align::Min)));
+        self.chain_rail(&mut child);
+        let line_x = rail.right() + SP_2;
+        ui.painter().line_segment([egui::pos2(line_x, full.top()), egui::pos2(line_x, full.bottom())], Stroke::new(1.0, DIVIDER));
+        let content = egui::Rect::from_min_max(egui::pos2(line_x + 1.0, full.top()), full.max);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content));
         let target = self.chain_target();
-        let area = ui.available_rect_before_wrap();
         if target.is_none() && !self.master_selected {
-            ui.allocate_rect(area, Sense::hover());
-            empty_state(ui, area, "No track selected", "Select a track to see its devices.", None);
+            child.allocate_rect(content, Sense::hover());
+            empty_state(&mut child, content, "No track selected", "Choose a track on the left, or Master.", None);
             return;
         }
+        match self.picture.mode {
+            ChainMode::Sound => self.sound_chain(&mut child, target),
+            ChainMode::Picture => self.picture_chain_panel(&mut child, target),
+        }
+    }
+
+    fn sound_chain(&mut self, ui: &mut Ui, target: Option<TrackId>) {
+        let area = ui.available_rect_before_wrap();
         let Some(chain) = self.project.device_chain(target).cloned() else { return };
         if chain.is_empty() {
             ui.allocate_rect(area, Sense::hover());
-            empty_state(ui, area, "No devices yet", "Use Add device above to start a chain.", None);
+            empty_state(ui, area, "No devices yet", "Use Add device on the left to start a chain.", None);
             return;
         }
         let tint = target.and_then(|t| self.project.track(t)).map_or(TEXT_2, |t| track_color(t.color));

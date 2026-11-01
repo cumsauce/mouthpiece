@@ -53,6 +53,11 @@ pub enum Action {
     FitToTempo,
     NudgeLeft,
     NudgeRight,
+    NudgeBarLeft,
+    NudgeBarRight,
+    ShowPicture,
+    LargePicture,
+    RenameTrack,
     ZoomIn,
     ZoomOut,
     ZoomFit,
@@ -104,12 +109,12 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::PlayFromSelection, "Play from the selection", key(SHIFT, Key::Space), "Transport"),
     (Action::Stop, "Stop and return", key(NONE, Key::Enter), "Transport"),
     (Action::SoloTrack, "Solo the selection's track", key(SHIFT, Key::S), "Transport"),
-    (Action::ToggleLoop, "Toggle loop", key(NONE, Key::L), "Transport"),
+    (Action::ToggleLoop, "Toggle loop", key(CMD, Key::L), "Transport"),
     (Action::LoopSelection, "Loop selected clips", key(SHIFT, Key::L), "Transport"),
     (Action::ToggleMetronome, "Toggle metronome", key(NONE, Key::K), "Transport"),
     (Action::Undo, "Undo", key(CMD, Key::Z), "Edit"),
     (Action::Redo, "Redo", key(CMD_SHIFT, Key::Z), "Edit"),
-    (Action::Split, "Split at playhead", key(NONE, Key::S), "Edit"),
+    (Action::Split, "Split at playhead", key(CMD, Key::E), "Edit"),
     (Action::Delete, "Delete selection", key(NONE, Key::Backspace), "Edit"),
     (Action::Deselect, "Deselect", key(NONE, Key::Escape), "Edit"),
     (Action::Duplicate, "Duplicate selection", key(CMD, Key::D), "Edit"),
@@ -118,6 +123,8 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::SelectAll, "Select all clips", key(CMD, Key::A), "Edit"),
     (Action::NudgeLeft, "Nudge left", key(NONE, Key::ArrowLeft), "Edit"),
     (Action::NudgeRight, "Nudge right", key(NONE, Key::ArrowRight), "Edit"),
+    (Action::NudgeBarLeft, "Nudge left a bar", key(SHIFT, Key::ArrowLeft), "Edit"),
+    (Action::NudgeBarRight, "Nudge right a bar", key(SHIFT, Key::ArrowRight), "Edit"),
     (Action::FineNudgeLeft, "Nudge left 5 ms", key(ALT, Key::ArrowLeft), "Edit"),
     (Action::FineNudgeRight, "Nudge right 5 ms", key(ALT, Key::ArrowRight), "Edit"),
     (Action::Reverse, "Reverse clip", key(NONE, Key::R), "Clip"),
@@ -152,14 +159,16 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::ZoomOut, "Zoom out", key(NONE, Key::Minus), "View"),
     (Action::ZoomFit, "Zoom to fit project", key(NONE, Key::Num0), "View"),
     (Action::ZoomSelection, "Zoom to selection", key(NONE, Key::Z), "View"),
-    (Action::ToggleSnap, "Toggle snapping", key(NONE, Key::N), "View"),
+    (Action::ToggleSnap, "Toggle snapping", key(NONE, Key::S), "View"),
     (Action::ToggleEditor, "Show / hide bottom panel", key(NONE, Key::Tab), "View"),
     (Action::ShowEditor, "Show detail editor", key(NONE, Key::Num1), "View"),
     (Action::ShowDevices, "Show devices", key(NONE, Key::Num2), "View"),
     (Action::ShowMixer, "Show mixer", key(NONE, Key::Num3), "View"),
     (Action::ToggleInspector, "Show / hide inspector", key(NONE, Key::I), "View"),
     (Action::ToggleVideo, "Show / hide the picture", key(SHIFT, Key::V), "View"),
-    (Action::ToggleSay, "Show / hide the Say panel", key(NONE, Key::B), "View"),
+    (Action::ToggleSay, "Show / hide the Say panel", key(CMD, Key::B), "View"),
+    (Action::ShowPicture, "Show picture effects", None, "View"),
+    (Action::LargePicture, "Make the picture large or small", None, "View"),
     (Action::Palette, "Command palette", key(CMD, Key::K), "View"),
     (Action::Shortcuts, "Keyboard shortcuts", key(NONE, Key::Questionmark), "View"),
     (Action::New, "New project", key(CMD, Key::N), "File"),
@@ -167,9 +176,10 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::Save, "Save", key(CMD, Key::S), "File"),
     (Action::SaveAs, "Save as", key(CMD_SHIFT, Key::S), "File"),
     (Action::Import, "Import audio files", key(CMD, Key::I), "File"),
-    (Action::Export, "Render to MP3 or WAV", key(CMD, Key::R), "File"),
+    (Action::Export, "Render to MP3, WAV or MP4", key(CMD_SHIFT, Key::R), "File"),
     (Action::AddTrack, "Add track", key(CMD, Key::T), "Track"),
     (Action::AddVocalTrack, "Add Sentence track", None, "Track"),
+    (Action::RenameTrack, "Rename track", key(CMD, Key::R), "Track"),
     (Action::DeleteTrack, "Delete track", key(CMD, Key::Backspace), "Track"),
     (Action::AddEq, "Add EQ", None, "Device"),
     (Action::AddCompressor, "Add Compressor", None, "Device"),
@@ -230,6 +240,10 @@ impl App {
         // Slash goes to the input from anywhere. It's here since it's a second key for FocusSay.
         if !typing && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Slash)) {
             self.run(Action::FocusSay);
+        }
+        // The forward delete key does the same as the main one.
+        if !typing && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete)) {
+            self.run(Action::Delete);
         }
         // The windowing layer turns these two into clipboard events and sends no key press for them.
         // A text field that's being typed in takes them itself.
@@ -303,7 +317,14 @@ impl App {
             Action::Import => self.import_dialog(),
             Action::Export => self.open_export_dialog(),
             Action::Split => self.split_at_playhead(),
-            Action::Delete => self.delete_selection(),
+            Action::Delete => {
+                if self.delete_selected_key() {
+                } else if !self.selection.is_empty() {
+                    self.delete_selection();
+                } else if self.track_focus {
+                    self.run(Action::DeleteTrack);
+                }
+            }
             Action::Duplicate => self.duplicate_selection(),
             Action::Copy => self.copy_selection(),
             Action::Paste => self.paste(),
@@ -366,6 +387,18 @@ impl App {
             Action::SnapPitchToKey => self.snap_selection_pitch(),
             Action::NudgeLeft => self.nudge(-1.0),
             Action::NudgeRight => self.nudge(1.0),
+            Action::NudgeBarLeft => self.nudge_by(-self.bar_seconds()),
+            Action::NudgeBarRight => self.nudge_by(self.bar_seconds()),
+            Action::ShowPicture => {
+                self.picture.mode = crate::panels::picture::ChainMode::Picture;
+                self.show_tab(BottomTab::Devices);
+            }
+            Action::LargePicture => self.picture.large = !self.picture.large,
+            Action::RenameTrack => {
+                if let Some(track) = self.selected_track.and_then(|t| self.project.track(t)) {
+                    self.rename_track = Some((track.id, track.name.clone(), false));
+                }
+            }
             Action::ZoomIn => self.zoom_focused(1.4),
             Action::ZoomOut => self.zoom_focused(1.0 / 1.4),
             Action::ZoomFit => {
@@ -412,9 +445,12 @@ impl App {
                 self.selected_track = Some(track);
             }
             Action::DeleteTrack => {
-                if let Some(track) = self.selected_track.take() {
+                let name = self.selected_track.and_then(|t| self.project.track(t)).map(|t| t.name.clone());
+                if let (Some(track), Some(name)) = (self.selected_track.take(), name) {
                     self.edit("Delete track", |p| p.remove_track(track));
                     self.selection.retain(|c| self.project.clip(*c).is_some());
+                    self.track_focus = false;
+                    self.toast_with(ToastKind::Info, format!("Deleted {name}"), crate::app::ToastAction::Undo);
                 }
             }
             Action::Transcribe => self.transcribe_selected(),
@@ -428,6 +464,10 @@ impl App {
             Action::AddUtility => self.add_device(DeviceKind::Utility),
             Action::AddLimiter => self.add_device(DeviceKind::Limiter),
         }
+    }
+
+    fn bar_seconds(&self) -> f64 {
+        self.project.beat_seconds() * self.project.beats_per_bar as f64
     }
 
     fn show_tab(&mut self, tab: BottomTab) {
@@ -496,6 +536,7 @@ impl App {
             return;
         }
         self.edit(&format!("Add {}", kind.name()), |p| p.add_device(target, kind.clone()));
+        self.picture.mode = crate::panels::picture::ChainMode::Sound;
         self.show_tab(BottomTab::Devices);
     }
 

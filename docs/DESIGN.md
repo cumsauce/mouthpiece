@@ -137,7 +137,8 @@ Every panel builds with these. Which one do you need?
 | Choose from 2–5 visible options | `segmented` | A dropdown |
 | Choose from a long list | `dropdown` + `menu_choice` | Segments |
 | Turn something on or off | `switch`, or `Button::active` in toolbars | A checkbox |
-| Switch views | `tabs` | Segments |
+| Switch views | `tabs`, alone in its row | Segments, or controls right beside the tabs |
+| Put controls in a row that holds tabs | `right_aligned`, against the far edge | Directly after the tabs, where they read as more tabs |
 | Show a menu | `menu_button` + `menu_item` | |
 | Mute or solo | `letter_toggle` | |
 | Set a device's parameter | `knob` | `ValueField`, in a device |
@@ -291,6 +292,12 @@ Each of these was a real bug. They're easy to repeat.
 1. Add it to `DeviceKind`. Give its parameters stable ids, and never reuse one.
 2. Implement it in `mp-engine/src/devices.rs`. Knobs appear on their own, from `params_of`.
 3. Add it to `ADDABLE` in `panels/devices.rs` and to `ACTIONS`.
+
+**Add a picture effect**
+1. Add it to the end of `PictureKind::ALL` in `mp-model/src/picture.rs`. Its position is its number in the shader.
+2. List its parameters in `params_of` in `mp-vfx/src/lib.rs`. Ids are stable, and the order sets `param(i)` in the shader.
+3. Add a `case` to `effect` in `mp-vfx/src/shader.wgsl`. Use only the time and parameters, never state from an earlier
+   frame: preview scrubs and render jumps, and both have to give the same frame.
 
 ## Checking your work
 

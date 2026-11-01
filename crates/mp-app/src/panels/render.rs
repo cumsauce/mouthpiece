@@ -55,7 +55,8 @@ impl App {
             tail_seconds,
             title,
         };
-        self.jobs.export(self.project.clone(), self.bank.clone(), self.cache.clone(), self.sample_rate, settings, path);
+        let peaks = self.runtime.iter().map(|(id, r)| (*id, r.peaks.clone())).collect();
+        self.jobs.export(self.project.clone(), self.bank.clone(), self.cache.clone(), self.sample_rate, settings, peaks, path);
     }
 
     pub fn render_modal(&mut self, ctx: &egui::Context) {

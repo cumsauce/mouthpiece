@@ -38,7 +38,7 @@ impl App {
                 (Action::Save, "Save", "⌘S"),
                 (Action::SaveAs, "Save as…", "⇧⌘S"),
                 (Action::Import, "Add audio files…", "⌘I"),
-                (Action::Export, "Render…", "⌘R"),
+                (Action::Export, "Render…", "⇧⌘R"),
             ] {
                 if menu_item(ui, name, Some(key)).clicked() {
                     self.run(action);
@@ -81,7 +81,7 @@ impl App {
         if ui.add(IconButton::new(icon, name).shortcut("Space").active(playing).tint(GOOD).size(28.0)).clicked() {
             self.run(Action::PlayPause);
         }
-        if ui.add(IconButton::new(Icon::Loop, "Loop. Shift-drag on the ruler to set it.").shortcut("L").active(self.project.loop_region.enabled).size(28.0)).clicked() {
+        if ui.add(IconButton::new(Icon::Loop, "Loop. Shift-drag on the ruler to set it.").shortcut("⌘L").active(self.project.loop_region.enabled).size(28.0)).clicked() {
             self.run(Action::ToggleLoop);
         }
         if ui.add(IconButton::new(Icon::Metronome, "Metronome").shortcut("K").active(self.project.metronome).size(28.0)).clicked() {
@@ -117,7 +117,7 @@ impl App {
             self.edit("Change key", |p| p.key = chosen);
         }
         ui.add_space(SP_1);
-        if ui.add(IconButton::new(Icon::Magnet, "Snap. Hold ⌘ while dragging to bypass.").shortcut("N").active(self.snap)).clicked() {
+        if ui.add(IconButton::new(Icon::Magnet, "Snap. Hold ⌘ while dragging to bypass.").shortcut("S").active(self.snap)).clicked() {
             self.snap = !self.snap;
         }
         dropdown(ui, "grid", grid_label(self.grid_division), 40.0, |ui| {
@@ -138,7 +138,7 @@ impl App {
     fn output_controls(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.x = SP_1;
         ui.add_space(SP_1);
-        if ui.add(Button::primary("Render").tip("Render to MP3 or WAV", Some("⌘R"))).clicked() {
+        if ui.add(Button::primary("Render").tip("Render to MP3 or WAV", Some("⇧⌘R"))).clicked() {
             self.run(Action::Export);
         }
         ui.add_space(SP_2);
@@ -150,7 +150,7 @@ impl App {
         meter(ui.painter(), rect, self.master_hold);
         tip(response, "Master level", None);
         ui.add_space(SP_2);
-        if ui.add(IconButton::new(Icon::PanelRight, "Say panel").shortcut("B").active(self.show_say)).clicked() {
+        if ui.add(IconButton::new(Icon::PanelRight, "Say panel").shortcut("⌘B").active(self.show_say)).clicked() {
             self.run(Action::ToggleSay);
         }
         if ui.add(IconButton::new(Icon::PanelBottom, "Bottom panel").shortcut("Tab").active(self.show_bottom)).clicked() {

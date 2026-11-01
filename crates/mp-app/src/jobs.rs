@@ -10,9 +10,10 @@ use mp_analysis::video::{self, VideoProxy};
 use mp_analysis::{decode, key, tempo, Transcript};
 use mp_dsp::Stereo;
 use mp_engine::{GraphCompiler, RenderCache, SourceBank};
-use mp_export::video::VideoSettings;
+use mp_export::video::{LevelSource, VideoSettings};
 use mp_export::{ExportSettings, Format};
 use mp_model::{Project, SourceId};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -215,6 +216,7 @@ impl Jobs {
         cache: Arc<RenderCache>,
         sample_rate: u32,
         settings: ExportSettings,
+        peaks: HashMap<SourceId, Arc<Peaks>>,
         path: PathBuf,
     ) {
         let (job, cancel) = self.register(format!("Rendering {}", file_stem(&path)), true);
@@ -236,7 +238,7 @@ impl Jobs {
                 !cancel.load(Ordering::Relaxed)
             };
             let result = match settings.format {
-                Format::Mp4 { height } => export_video(graph, &project, sample_rate, &settings, height, &path, report),
+                Format::Mp4 { height } => export_video(graph, &project, sample_rate, &settings, height, peaks, &path, report),
                 _ => mp_export::export(graph, sample_rate, &settings, &path, report),
             };
             match result {
@@ -266,6 +268,7 @@ fn export_video(
     sample_rate: u32,
     settings: &ExportSettings,
     height: u32,
+    peaks: HashMap<SourceId, Arc<Peaks>>,
     path: &std::path::Path,
     mut report: impl FnMut(f32) -> bool,
 ) -> Result<bool, String> {
@@ -277,11 +280,10 @@ fn export_video(
         }
         const FPS: u32 = 30;
         let (a, b) = (settings.start as f64 / sample_rate as f64, settings.end as f64 / sample_rate as f64);
-        let segments = project.video_edit_list(a, b, FPS);
-        let sources = project.sources.iter().map(|s| (s.id, s.path.clone())).collect();
         let width = height * 16 / 9;
         let video = VideoSettings { width: width + width % 2, height, fps: FPS };
-        mp_export::video::export_video(&segments, &sources, &audio, &video, path, |p| report(0.2 + p * 0.8))
+        let levels = LevelSource { peaks, sample_rate: sample_rate as f64 };
+        mp_export::video::export_video(project, (a, b), &levels, &audio, &video, path, |p| report(0.2 + p * 0.8))
     })();
     let _ = std::fs::remove_file(&audio);
     result

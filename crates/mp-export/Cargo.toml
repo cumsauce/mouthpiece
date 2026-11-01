@@ -8,8 +8,7 @@ license.workspace = true
 mp-model.workspace = true
 mp-dsp.workspace = true
 mp-engine.workspace = true
+mp-vfx.workspace = true
+mp-analysis.workspace = true
 mp3lame-encoder = "0.2.5"
 hound = "3.5"
-
-[dev-dependencies]
-mp-analysis.workspace = true

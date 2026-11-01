@@ -39,6 +39,8 @@ pub enum Icon {
     Bookmark,
     Restore,
     Compare,
+    Keyframe,
+    Expand,
 }
 
 pub(super) fn arc_points(c: Pos2, r: f32, from: f32, to: f32, n: usize) -> Vec<Pos2> {
@@ -171,6 +173,13 @@ pub fn draw_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32
             }
         }
         Icon::Check => poly(&[v(-0.7, 0.05), v(-0.2, 0.55), v(0.7, -0.55)]),
+        Icon::Keyframe => solid(&[v(0.0, -0.75), v(0.75, 0.0), v(0.0, 0.75), v(-0.75, 0.0)]),
+        Icon::Expand => {
+            poly(&[v(-0.75, -0.25), v(-0.75, -0.75), v(-0.25, -0.75)]);
+            poly(&[v(0.25, -0.75), v(0.75, -0.75), v(0.75, -0.25)]);
+            poly(&[v(0.75, 0.25), v(0.75, 0.75), v(0.25, 0.75)]);
+            poly(&[v(-0.25, 0.75), v(-0.75, 0.75), v(-0.75, 0.25)]);
+        }
         Icon::Compare => {
             poly(&[v(-0.8, -0.35), v(0.8, -0.35), v(0.35, -0.8)]);
             poly(&[v(0.8, 0.35), v(-0.8, 0.35), v(-0.35, 0.8)]);

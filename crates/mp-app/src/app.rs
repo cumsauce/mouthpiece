@@ -121,6 +121,12 @@ pub struct App {
     pub video_texture: Option<TextureHandle>,
     pub video_frame: Option<(SourceId, usize)>,
     pub show_video: bool,
+    pub picture: crate::panels::picture::PictureState,
+    pub render_state: Option<eframe::egui_wgpu::RenderState>,
+    /// Whether Delete means the selected track: true after clicking its header, until anything else is clicked.
+    pub track_focus: bool,
+    /// A track being renamed, and its name so far.
+    pub rename_track: Option<(TrackId, String, bool)>,
     /// What's being auditioned, and from where, so the picture can follow it.
     pub audition_source: Option<(SourceId, f64)>,
 
@@ -211,6 +217,10 @@ impl App {
             video_texture: None,
             video_frame: None,
             show_video: true,
+            picture: Default::default(),
+            render_state: None,
+            track_focus: false,
+            rename_track: None,
             audition_source: None,
             show_inspector: true,
             show_say: true,
@@ -789,6 +799,9 @@ impl App {
 
     pub fn frame_start(&mut self) {
         self.process_jobs();
+        if !self.selection.is_empty() {
+            self.track_focus = false;
+        }
         if self.jobs.active.is_empty() {
             if let Some(text) = self.tempo_toast.take() {
                 self.toast(ToastKind::Good, text);

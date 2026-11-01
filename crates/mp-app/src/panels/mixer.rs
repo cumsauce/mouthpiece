@@ -58,6 +58,8 @@ impl App {
             if name.clicked() {
                 self.selected_track = Some(id);
                 self.master_selected = false;
+                self.track_focus = true;
+                self.selection.clear();
             }
             if name.double_clicked() {
                 self.open_track_in_editor(id);

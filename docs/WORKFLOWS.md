@@ -139,7 +139,28 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
   - **A list of everything changed,** with what it used to say, and one switch to hear the whole original song.
 - **Failure to avoid:** a screen full of tracks to mute and solo.
 
-### 11. Finish and share
+### 11. Make the picture move with the music
+
+> When a beat lands or a word hits, I want the picture to react, so that the video feels cut to the song
+> without a separate editor.
+
+- **Done when:** the effect plays in time in the preview, and the MP4 matches it.
+- **Budget:** Devices → Picture → Add effect → a ready-made idea such as "Zoom punch on the beat". One click gets
+  something moving, and every part of it can then be changed.
+- **Needs:**
+  - **The chain you already know.** Same cards and knobs as audio devices, on the same tracks and Master.
+  - **Motion on any knob.** Click a knob for its motion bar: keyframes, a beat pulse, or following a track's level.
+    Turning a knob that has keyframes sets a keyframe at the playhead.
+  - **Keyframes under the music.** The lane lines up with the arrangement directly above it, so a key sits under
+    the clip it belongs to, and snaps to the same grid.
+  - **Direct handles.** Drag on the preview to place a Transform, a Warp or an area, and use the corner to size it.
+  - **Any effect, on part of the picture.** Every effect has an Area: an ellipse or rectangle, soft-edged, inside or
+    outside, and its position can move too.
+  - **Preview equals render.** The same shader and the same stateless motion run in both. Scrubbing to a time shows
+    what that frame will be.
+- **Failure to avoid:** a second timeline to keep in sync, or effects that look different once rendered.
+
+### 12. Finish and share
 
 > When it's good, I want an MP3, so I can post it.
 
@@ -166,7 +187,9 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 | Trying edits meant stacking parallel tracks | **Changes** live on the vocal's own lane, with versions and instant A/B |
 | Edits started from audio, not from what was being said | **Select lyrics and retype them.** A word diff means only real changes get new audio |
 | Hearing the line alone meant finding the track and clicking S | **Solo the selection's track** with one key, and play from the selection with another |
-| After placing a line, focus stayed in the input, where Space types a space | In an empty input, **Space plays the line** just placed and stopping returns to where the next one goes |
+| After placing a line, focus stayed in the input, where Space types a space | A vocabulary of every word as tags was overwhelming and rarely useful | Removed. Say shows **recent lines** and points to the lyrics |
+| Panel controls beside the tabs read as more tabs | **The tab row holds only tabs.** Devices has a left rail, and the Editor's toggles sit at the far right |
+| In an empty input, **Space plays the line** just placed and stopping returns to where the next one goes |
 
 ## Keyboard map for the core loop
 
@@ -198,3 +221,14 @@ Esc puts everything back.
 | Shift+Space | | Play from the selection |
 | Shift+S | | Solo the selection's track |
 | ⌘F or / | Go to the Say input | |
+| ⌘E | | Split at the playhead |
+| Delete | | Delete the selection, or the track whose header was just clicked |
+| ⇧← ⇧→ | | Nudge by a bar |
+
+## Hotkeys and Bitwig
+
+Where Bitwig has an equivalent command, the key follows Bitwig: ⌘E split, S snap, ⌘L loop, ⌘R rename, ⌘B the browser
+(here, Say), ⌘T add track, ←→ and ⇧←→ nudge, Q quantize, ⌘D duplicate. ⌘R taking rename moves Render to ⇧⌘R.
+Mouthpiece's own commands, such as Try and Change, use free keys. Bitwig's 1 to 5 tool keys aren't used, since there are no
+tool modes here, and 1 to 3 switch the bottom panel. These come from third-party shortcut lists, which disagree in
+places, and Bitwig's own bindings are customizable, so check here if something feels off.
