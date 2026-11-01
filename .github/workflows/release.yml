@@ -114,7 +114,10 @@ jobs:
 
       - name: Publish a tagged release
         if: startsWith(github.ref, 'refs/tags/')
-        run: gh release create "$GITHUB_REF_NAME" packages/* --title "$GITHUB_REF_NAME" --generate-notes
+        # Re-running a platform that failed, or that got no runner, adds it to the release already out.
+        run: |
+          gh release upload "$GITHUB_REF_NAME" packages/* --clobber ||
+            gh release create "$GITHUB_REF_NAME" packages/* --title "$GITHUB_REF_NAME" --generate-notes
 
       - name: Replace the rolling pre-release
         if: github.ref == 'refs/heads/main'
