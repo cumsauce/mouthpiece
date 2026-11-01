@@ -232,6 +232,15 @@ pub fn download(result: &SongResult, kind: DownloadKind, dir: &Path, cancel: &At
         .ok_or_else(|| "yt-dlp didn't say where it saved the file".to_string())
 }
 
+/// A downloaded file's name without the video id that keeps it unique on disk.
+pub fn display_name(file_stem: &str) -> &str {
+    const SHORTEST_ID: usize = 6;
+    match file_stem.strip_suffix(']').and_then(|s| s.rsplit_once(" [")) {
+        Some((name, id)) if id.len() >= SHORTEST_ID && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') => name,
+        _ => file_stem,
+    }
+}
+
 /// Where downloads go by default: a folder someone can find, since projects keep using these files.
 pub fn default_download_dir() -> PathBuf {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map_or_else(std::env::temp_dir, PathBuf::from);
@@ -252,6 +261,13 @@ mod tests {
         let link = parse_results(r#"{"id":"c","title":"Three","webpage_url":"https://x/c"}"#);
         assert_eq!(link[0].url, "https://x/c");
         assert!(parse_results("not json").is_empty());
+    }
+
+    #[test]
+    fn video_ids_are_left_out_of_names() {
+        assert_eq!(display_name("Big Buck Bunny trailer [yUQM7H4Swgw]"), "Big Buck Bunny trailer");
+        assert_eq!(display_name("Song [live]"), "Song [live]");
+        assert_eq!(display_name("Plain"), "Plain");
     }
 
     #[test]

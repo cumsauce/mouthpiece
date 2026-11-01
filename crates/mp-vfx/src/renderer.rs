@@ -2,9 +2,8 @@
 
 use crate::Pass;
 
-/// The output is stored as plain bytes, and egui reads it through a view that decodes sRGB.
+/// Frames stay as the sRGB bytes they came in as, which is also the format egui requires of a native texture.
 pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-pub const OUTPUT_VIEW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 const UNIFORM_SIZE: u64 = 96;
 /// Uniforms for each pass have to start on this boundary, which every GPU supports.
@@ -117,7 +116,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2,
             format: OUTPUT_FORMAT,
             usage: usage(),
-            view_formats: &[OUTPUT_VIEW_FORMAT],
+            view_formats: &[],
         });
         let output_view = output.create_view(&Default::default());
         Self { device, queue, pipeline, layout, sampler, uniforms, source: None, scratch, output, output_view, width, height }
@@ -133,7 +132,7 @@ impl Renderer {
 
     /// A view of the result that egui can display.
     pub fn display_view(&self) -> wgpu::TextureView {
-        self.output.create_view(&wgpu::TextureViewDescriptor { format: Some(OUTPUT_VIEW_FORMAT), ..Default::default() })
+        self.output.create_view(&Default::default())
     }
 
     /// Sets the frame to process, as tightly packed RGBA.

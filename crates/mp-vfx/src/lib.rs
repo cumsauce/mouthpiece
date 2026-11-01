@@ -3,7 +3,7 @@
 
 mod renderer;
 
-pub use renderer::{Renderer, OUTPUT_FORMAT, OUTPUT_VIEW_FORMAT};
+pub use renderer::{Renderer, OUTPUT_FORMAT};
 
 use mp_analysis::peaks::Peaks;
 use mp_engine::{Curve, ParamInfo, Unit};

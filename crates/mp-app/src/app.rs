@@ -952,7 +952,7 @@ impl App {
     fn on_imported(&mut self, imported: crate::jobs::Imported) {
         let crate::jobs::Imported { path, audio, mono, peaks, tempo, key, existing } = imported;
         let duration = audio.frames() as f64 / self.sample_rate as f64;
-        let name = file_stem(&path);
+        let name = mp_analysis::online::display_name(&file_stem(&path)).to_string();
         let picture = self.stems.pending_picture.remove(&path);
         let is_video = mp_analysis::video::is_video_path(&path) || picture.is_some();
         // Unless its name says otherwise, a video is people talking, so it should get transcribed.
