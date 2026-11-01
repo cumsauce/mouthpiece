@@ -10,13 +10,11 @@ use eframe::egui::{self, Response, Ui};
 use mp_model::{ClipId, ClipMode};
 
 impl App {
-    /// Ties a value widget to the undo system: a drag or text edit counts as one undo step.
+    /// Call before applying a widget's change, so that undo returns to the value before it. Sliders
+    /// change on press rather than on drag. `App::frame_start` ends the gesture on release.
     fn gesture_for(&mut self, response: &Response, label: &str) {
-        if response.drag_started() || response.gained_focus() {
+        if response.changed() {
             self.begin_gesture(label);
-        }
-        if response.drag_stopped() || response.lost_focus() {
-            self.end_gesture();
         }
     }
 
@@ -64,10 +62,10 @@ impl App {
         let elastic = first.mode == ClipMode::Elastic;
         ui.add_enabled_ui(elastic, |ui| {
             let r = ui.add(egui::Slider::new(&mut semis, -24.0..=24.0).suffix(" st").fixed_decimals(2).step_by(0.01));
+            self.gesture_for(&r, "Change pitch");
             if r.changed() {
                 self.set_selected(|c| c.pitch = semis);
             }
-            self.gesture_for(&r, "Change pitch");
         });
         ui.horizontal(|ui| {
             if ui.small_button("−1").clicked() {
@@ -89,7 +87,6 @@ impl App {
         self.pitch_readout(ui, first.id);
         let mut formants = first.preserve_formants;
         if ui.add_enabled(elastic, egui::Checkbox::new(&mut formants, "Keep voice character")).on_hover_text("Preserves formants, so voices don't sound like chipmunks when repitched").changed() {
-            self.edit("Change formants", |_| {});
             self.begin_gesture("Change formants");
             self.set_selected(|c| c.preserve_formants = formants);
             self.end_gesture();
@@ -98,6 +95,7 @@ impl App {
         Self::section(ui, "Time");
         let mut speed = (100.0 / first.stretch) as f32;
         let r = ui.add(egui::Slider::new(&mut speed, 10.0..=400.0).logarithmic(true).suffix("% speed").fixed_decimals(1));
+        self.gesture_for(&r, "Change speed");
         if r.changed() {
             let ratio = 100.0 / speed as f64;
             for id in self.selection.clone() {
@@ -105,7 +103,6 @@ impl App {
             }
             self.needs_compile = true;
         }
-        self.gesture_for(&r, "Change speed");
         ui.horizontal(|ui| {
             for (label, value) in [("½×", 2.0), ("1×", 1.0), ("2×", 0.5)] {
                 if ui.small_button(label).clicked() {
@@ -132,29 +129,29 @@ impl App {
         Self::section(ui, "Level");
         let mut gain = first.gain_db;
         let r = ui.add(egui::Slider::new(&mut gain, -48.0..=24.0).suffix(" dB").fixed_decimals(1));
+        self.gesture_for(&r, "Change clip gain");
         if r.changed() {
             self.set_selected(|c| c.gain_db = gain);
         }
-        self.gesture_for(&r, "Change clip gain");
         let mut pan = first.pan;
         let r = ui.add(egui::Slider::new(&mut pan, -1.0..=1.0).text("Pan").fixed_decimals(2));
+        self.gesture_for(&r, "Change clip pan");
         if r.changed() {
             self.set_selected(|c| c.pan = pan);
         }
-        self.gesture_for(&r, "Change clip pan");
 
         Self::section(ui, "Fades");
         let (mut fade_in, mut fade_out) = ((first.fade_in * 1000.0) as f32, (first.fade_out * 1000.0) as f32);
         let r = ui.add(egui::Slider::new(&mut fade_in, 0.0..=2000.0).logarithmic(true).suffix(" ms in").fixed_decimals(0));
+        self.gesture_for(&r, "Change fade");
         if r.changed() {
             self.set_selected(|c| c.fade_in = (fade_in as f64 * 0.001).min(c.length()));
         }
-        self.gesture_for(&r, "Change fade");
         let r = ui.add(egui::Slider::new(&mut fade_out, 0.0..=2000.0).logarithmic(true).suffix(" ms out").fixed_decimals(0));
+        self.gesture_for(&r, "Change fade");
         if r.changed() {
             self.set_selected(|c| c.fade_out = (fade_out as f64 * 0.001).min(c.length()));
         }
-        self.gesture_for(&r, "Change fade");
 
         Self::section(ui, "Actions");
         ui.horizontal_wrapped(|ui| {
@@ -189,19 +186,14 @@ impl App {
     }
 
     /// Shows a selected word's note, which is what you need when tuning by hand.
-    fn pitch_readout(&self, ui: &mut Ui, clip: ClipId) {
-        let Some(c) = self.project.clip(clip) else { return };
-        let Some(runtime) = self.runtime.get(&c.source) else { return };
-        // Long clips have no single note, and measuring them each frame would be wasteful.
+    fn pitch_readout(&mut self, ui: &mut Ui, clip: ClipId) {
+        let Some(c) = self.project.clip(clip).cloned() else { return };
+        // Long clips don't have one note to show.
         if c.src_len() > 3.0 {
             return;
         }
-        let sr = self.sample_rate as f32;
-        let a = ((c.src_in * sr as f64) as usize).min(runtime.mono.len());
-        let b = ((c.src_out * sr as f64) as usize).min(runtime.mono.len());
-        if let Some(hz) = mp_dsp::pitch::median_pitch(&runtime.mono[a..b.max(a)], sr) {
-            let original = mp_dsp::hz_to_midi(hz);
-            let heard = original + c.effective_pitch();
+        if let Some(hz) = self.clip_pitch(c.source, c.src_in, c.src_out) {
+            let heard = mp_dsp::hz_to_midi(hz) + c.effective_pitch();
             ui.label(egui::RichText::new(format!("Note {} ({:.0} Hz)", mp_dsp::midi_name(heard), hz)).size(11.0).color(TEXT_DIM));
         }
     }
@@ -214,34 +206,34 @@ impl App {
             ui.painter().circle_filled(r.center(), 5.0, track_color(track.color));
             let mut name = track.name.clone();
             let edit = ui.add(egui::TextEdit::singleline(&mut name).desired_width(150.0).font(egui::TextStyle::Body));
+            self.gesture_for(&edit, "Rename track");
             if edit.changed() {
                 if let Some(t) = self.project.track_mut(id) {
                     t.name = name;
                 }
             }
-            self.gesture_for(&edit, "Rename track");
         });
         ui.label(egui::RichText::new(format!("{} · {} clip{}", track.kind.label(), track.clips.len(), if track.clips.len() == 1 { "" } else { "s" })).size(11.0).color(TEXT_FAINT));
 
         Self::section(ui, "Level");
         let mut gain = track.gain_db;
         let r = ui.add(egui::Slider::new(&mut gain, -60.0..=12.0).suffix(" dB").fixed_decimals(1));
+        self.gesture_for(&r, "Change track gain");
         if r.changed() {
             if let Some(t) = self.project.track_mut(id) {
                 t.gain_db = gain;
             }
             self.needs_compile = true;
         }
-        self.gesture_for(&r, "Change track gain");
         let mut pan = track.pan;
         let r = ui.add(egui::Slider::new(&mut pan, -1.0..=1.0).text("Pan").fixed_decimals(2));
+        self.gesture_for(&r, "Change track pan");
         if r.changed() {
             if let Some(t) = self.project.track_mut(id) {
                 t.pan = pan;
             }
             self.needs_compile = true;
         }
-        self.gesture_for(&r, "Change track pan");
 
         Self::section(ui, "Color");
         ui.horizontal(|ui| {
@@ -275,7 +267,7 @@ impl App {
         ui.label(egui::RichText::new(self.project.name.clone()).size(14.0).color(TEXT).strong());
         ui.label(egui::RichText::new(format!("{} tracks · {}", self.project.tracks.len(), format_time(self.project.duration()))).size(11.0).color(TEXT_FAINT));
         Self::section(ui, "Shortcuts worth knowing");
-        for (key, what) in [("⌘K", "Every command"), ("⌘F", "Search words"), ("⌘B", "Sentence Builder"), ("S", "Split"), ("Tab", "Show or hide editor"), ("⇧/", "All shortcuts")] {
+        for (key, what) in [("⌘K", "Every command"), ("⌘F", "Search words"), ("⌘B", "Sentence Builder"), ("S", "Split"), ("Tab", "Show or hide editor"), ("?", "All shortcuts")] {
             ui.horizontal(|ui| {
                 widgets::keycap(ui, &widgets::keys(key));
                 ui.label(egui::RichText::new(what).size(11.0).color(TEXT_DIM));

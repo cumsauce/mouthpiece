@@ -30,26 +30,30 @@ pub fn render(src: &Stereo, range: std::ops::Range<usize>, ratio: f64, algorithm
             r: fit(resample(&src.r[start..end], ratio), out_frames),
         },
         Algorithm::Elastic { semitones, preserve_formants } => {
-            let context = (CONTEXT_S * sample_rate as f64) as usize;
-            let (pad_start, pad_end) = (start.min(context), (frames - end).min(context));
-            let (from, to) = (start - pad_start, end + pad_end);
-            let input_frames = to - from;
+            let mut stretch = Stretch::preset_default(2, sample_rate);
+            // The stretcher writes nothing at all if given too little to work with, which would be
+            // a short clip sped up a lot. Extra context makes up the difference.
+            let shortest_input = (stretch.output_latency() as f64 * 2.0 / ratio).ceil() as usize + 2;
+            let context = ((CONTEXT_S * sample_rate as f64) as usize).max(shortest_input.saturating_sub(end - start) / 2 + 1);
+            let input_frames = end - start + context * 2;
             let mut interleaved = Vec::with_capacity(input_frames * 2);
-            for i in from..to {
-                interleaved.push(src.l[i]);
-                interleaved.push(src.r[i]);
+            for i in (start as isize - context as isize)..((end + context) as isize) {
+                // Silence past either end of the source.
+                let at = usize::try_from(i).ok().filter(|i| *i < frames);
+                interleaved.push(at.map_or(0.0, |i| src.l[i]));
+                interleaved.push(at.map_or(0.0, |i| src.r[i]));
             }
             let total_out = (input_frames as f64 * ratio).round() as usize;
             let mut output = vec![0f32; total_out * 2];
 
-            let mut stretch = Stretch::preset_default(2, sample_rate);
             stretch.set_transpose_factor_semitones(semitones, None);
             if preserve_formants && semitones != 0.0 {
                 stretch.set_formant_factor(1.0, true);
             }
-            stretch.exact(&interleaved, &mut output);
+            let rendered = stretch.exact(&interleaved, &mut output);
+            debug_assert!(rendered, "enough context was added above");
 
-            let skip = (pad_start as f64 * ratio).round() as usize;
+            let skip = (context as f64 * ratio).round() as usize;
             let mut out = Stereo::silence(out_frames);
             for i in 0..out_frames {
                 let j = (skip + i) * 2;
@@ -116,6 +120,23 @@ mod tests {
         assert_eq!(out.frames(), 96000);
         let hz = median_pitch(&out.l, SR as f32).unwrap();
         assert!((hz - 110.0).abs() < 2.0, "{hz}");
+    }
+
+    #[test]
+    fn short_clips_sped_up_a_lot_still_make_sound() {
+        let src = tone(220.0, 2.0);
+        for ratio in [0.25, 0.1] {
+            let out = render(&src, 48000..50400, ratio, Algorithm::Elastic { semitones: 0.0, preserve_formants: false }, SR);
+            assert!(rms(&out.l) > 0.3 * rms(&src.l), "ratio {ratio}: level {}", rms(&out.l));
+        }
+    }
+
+    #[test]
+    fn a_short_whole_file_can_be_repitched() {
+        let src = tone(220.0, 0.05);
+        let out = render(&src, 0..src.frames(), 1.0, Algorithm::Elastic { semitones: 3.0, preserve_formants: false }, SR);
+        assert_eq!(out.frames(), src.frames());
+        assert!(rms(&out.l) > 0.1 * rms(&src.l), "level {}", rms(&out.l));
     }
 
     #[test]

@@ -356,12 +356,12 @@ impl App {
             }
             Zone::FadeIn => {
                 if let Some(c) = self.project.clip_mut(drag.anchor) {
-                    c.fade_in = (pointer_t - c.start).clamp(0.0, c.length() - c.fade_out);
+                    c.fade_in = (pointer_t - c.start).clamp(0.0, (c.length() - c.fade_out).max(0.0));
                 }
             }
             Zone::FadeOut => {
                 if let Some(c) = self.project.clip_mut(drag.anchor) {
-                    c.fade_out = (c.end() - pointer_t).clamp(0.0, c.length() - c.fade_in);
+                    c.fade_out = (c.end() - pointer_t).clamp(0.0, (c.length() - c.fade_in).max(0.0));
                 }
             }
         }

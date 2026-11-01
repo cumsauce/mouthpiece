@@ -7,6 +7,7 @@
 //! | import <path> | drop <path> | download <model id> | mute_all <tracks to keep, comma separated> | transcript <part of source name> <word> <word>... | export <path> | save <path>
 //! | open <path> | move <x> <y> | click/dclick/rclick/cmdclick <x> <y>
 //! | drag/altdrag/shiftdrag/cmddrag <x1> <y1> <x2> <y2> | key <name> | type <text>
+//! | cmdkey <name> | copy | paste | close | recover | add_device <track> <reverb/compressor>
 //! | screenshot <path> | dump <path> | quit
 
 use crate::app::{App, BottomTab};
@@ -207,6 +208,13 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
             }
             push(app, vec![pointer(PointerButton::Primary, to, false, m)], m);
         }
+        "cmdkey" => {
+            if let Some(key) = egui::Key::from_name(rest) {
+                let press = |pressed| Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Modifiers::COMMAND };
+                push(app, vec![press(true)], Modifiers::COMMAND);
+                push(app, vec![press(false)], Modifiers::COMMAND);
+            }
+        }
         "key" => {
             if let Some(key) = egui::Key::from_name(rest) {
                 let press = |pressed| Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE };
@@ -226,7 +234,21 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
             });
         }
         "dump" => dump(app, rest),
-        "quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        "quit" => {
+            app.allow_close = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        "close" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        "copy" => push(app, vec![Event::Copy], Modifiers::COMMAND),
+        "paste" => push(app, vec![Event::Paste("clips".to_string())], Modifiers::COMMAND),
+        "recover" => app.recover_autosave(),
+        "add_device" => {
+            let mut parts = rest.split_whitespace();
+            let track = parts.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+            let id = app.project.tracks.get(track).map(|t| t.id);
+            let kind = if parts.next() == Some("reverb") { mp_model::DeviceKind::Reverb } else { mp_model::DeviceKind::Compressor };
+            app.edit("Add device", |p| p.add_device(id, kind));
+        }
         _ => println!("script: UNKNOWN STEP {step}"),
     }
 }
@@ -267,6 +289,10 @@ fn dump(app: &App, path: &str) {
             "phonemes": w.phonemes.iter().map(|p| format!("{}:{:.3}", p.symbol, p.start)).collect::<Vec<_>>(),
             "pitch": w.pitch_hz })).collect::<Vec<_>>()).collect::<Vec<_>>(),
         "undo": app.history.labels().collect::<Vec<_>>(),
+        "show_shortcuts": app.show_shortcuts,
+        "query": app.browser.query,
+        "pending_discard": format!("{:?}", app.pending_discard),
+        "master_devices": app.project.master.devices.len(),
         "toasts": app.toasts.iter().map(|t| t.text.clone()).collect::<Vec<_>>(),
         "bottom_tab": format!("{:?}", app.bottom_tab),
         "show_bottom": app.show_bottom,

@@ -344,9 +344,7 @@ impl App {
         self.show_bottom = true;
         self.bottom_tab = BottomTab::Editor;
         if let Some(c) = self.project.clip(clip) {
-            let (a, b) = (c.start, c.end());
-            self.editor.view.fit(a, b);
-            self.editor.needs_fit = false;
+            self.editor.pending_fit = Some((c.start, c.end()));
         }
     }
 

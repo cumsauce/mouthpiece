@@ -54,6 +54,15 @@ pub enum ToastKind {
     Bad,
 }
 
+/// What to do once the user has decided about unsaved changes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AfterDiscard {
+    New,
+    Open,
+    OpenPath(PathBuf),
+    Quit,
+}
+
 pub struct App {
     pub ctx: egui::Context,
     pub project: Project,
@@ -97,6 +106,11 @@ pub struct App {
     pub palette_index: usize,
     pub show_shortcuts: bool,
     pub export_dialog: Option<ExportDialog>,
+    pub pending_discard: Option<AfterDiscard>,
+    pub allow_close: bool,
+    last_title: String,
+    /// The last measured clip range and its pitch, as measuring is too slow to repeat each frame.
+    pitch_memo: Option<((SourceId, u64, u64), Option<f32>)>,
     pub toasts: Vec<Toast>,
     pub jobs: Jobs,
     pub hint: String,
@@ -166,6 +180,10 @@ impl App {
             palette_index: 0,
             show_shortcuts: false,
             export_dialog: None,
+            pending_discard: None,
+            allow_close: false,
+            last_title: String::new(),
+            pitch_memo: None,
             toasts: Vec::new(),
             hint: String::new(),
             renaming_track: None,
@@ -419,8 +437,50 @@ impl App {
         }
     }
 
+    /// Runs `next` now if nothing would be lost, and otherwise asks first.
+    pub fn after_discard(&mut self, next: AfterDiscard) {
+        if self.is_dirty() {
+            self.pending_discard = Some(next);
+        } else {
+            self.perform(next);
+        }
+    }
+
+    pub fn perform(&mut self, next: AfterDiscard) {
+        match next {
+            AfterDiscard::New => self.new_project(),
+            AfterDiscard::Open => self.open_dialog(),
+            AfterDiscard::OpenPath(path) => self.open_project_at(&path),
+            AfterDiscard::Quit => {
+                self.allow_close = true;
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
     pub fn new_project(&mut self) {
         self.engine.stop();
+        // Ids restart with each project, so nothing keyed by them may carry over: a running device
+        // or a clip render with a matching id would otherwise be used for something else entirely.
+        self.compiler = GraphCompiler::default();
+        self.cache = Arc::new(RenderCache::new());
+        self.jobs.switch_project();
+        self.clipboard.clear();
+        self.gesture = None;
+        self.clip_drag = None;
+        self.marquee = None;
+        self.hit_drag = None;
+        self.snap_line = None;
+        self.renaming_track = None;
+        self.tempo_toast = None;
+        self.pitch_memo = None;
+        self.browser.results.clear();
+        self.browser.search_dirty = true;
+        self.browser.sentence_dirty = true;
+        self.editor.range = None;
+        self.editor.selected_word = None;
+        self.editor.last_track = None;
+        self.editor.needs_fit = true;
         self.project = Project::default();
         self.saved_state = self.project.clone();
         self.history = History::default();
@@ -504,9 +564,33 @@ impl App {
             Ok(()) => {
                 self.saved_state = self.project.clone();
                 self.project_path = Some(path.to_path_buf());
+                // The saved file is now the newest copy, so an older autosave would only mislead.
+                let _ = std::fs::remove_file(self.autosave_path());
                 self.toast(ToastKind::Good, "Saved");
             }
             Err(e) => self.toast(ToastKind::Bad, format!("Save failed: {e}")),
+        }
+    }
+
+    fn autosave_path(&self) -> PathBuf {
+        match &self.project_path {
+            Some(p) => p.with_extension(format!("{FILE_EXTENSION}.autosave")),
+            None => transcribe::app_data_dir().join(format!("untitled.{FILE_EXTENSION}.autosave")),
+        }
+    }
+
+    pub fn has_autosave(&self) -> bool {
+        self.autosave_path().exists()
+    }
+
+    /// Opens the autosave of this project. It stays unsaved, so it can't overwrite anything silently.
+    pub fn recover_autosave(&mut self) {
+        let (path, saved_as) = (self.autosave_path(), self.project_path.clone());
+        self.open_project_at(&path);
+        if self.project_path.is_some() {
+            self.project_path = saved_as;
+            self.saved_state = Project::default();
+            self.toast(ToastKind::Good, "Recovered from autosave. Save to keep it.");
         }
     }
 
@@ -515,10 +599,7 @@ impl App {
             return;
         }
         self.last_autosave = Instant::now();
-        let path = match &self.project_path {
-            Some(p) => p.with_extension(format!("{FILE_EXTENSION}.autosave")),
-            None => transcribe::app_data_dir().join(format!("untitled.{FILE_EXTENSION}.autosave")),
-        };
+        let path = self.autosave_path();
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -537,6 +618,11 @@ impl App {
         }
         self.sync_engine();
         self.autosave();
+        // Continuous edits finish when the pointer lifts and no text is being edited. Ending them
+        // here covers every widget, including a slider that was clicked but never dragged.
+        if self.gesture.is_some() && !self.ctx.input(|i| i.pointer.any_down()) && !self.ctx.egui_wants_keyboard_input() {
+            self.end_gesture();
+        }
         self.toasts.retain(|t| t.born.elapsed().as_secs_f32() < 3.5);
         if self.engine.is_playing() {
             self.playhead = self.engine.position() as f64 / self.sample_rate as f64;
@@ -572,7 +658,7 @@ impl App {
     }
 
     fn process_jobs(&mut self) {
-        while let Ok(event) = self.jobs.rx.try_recv() {
+        while let Some(event) = self.jobs.next_event() {
             match event {
                 JobEvent::Progress { job, fraction } => self.jobs.set_progress(job, fraction),
                 JobEvent::Done { job } => self.jobs.finish(job),
@@ -675,6 +761,31 @@ impl App {
         }
         self.browser.search_dirty = true;
         self.browser.sentence_dirty = true;
+    }
+
+    /// Pitch of the audio a clip plays, in Hz, remembered for the most recent clip.
+    pub fn clip_pitch(&mut self, source: SourceId, src_in: f64, src_out: f64) -> Option<f32> {
+        let key = (source, src_in.to_bits(), src_out.to_bits());
+        if let Some((memo_key, pitch)) = self.pitch_memo {
+            if memo_key == key {
+                return pitch;
+            }
+        }
+        let sr = self.sample_rate as f32;
+        let mono = &self.runtime.get(&source)?.mono;
+        let a = ((src_in * sr as f64) as usize).min(mono.len());
+        let b = ((src_out * sr as f64) as usize).min(mono.len());
+        let pitch = mp_dsp::pitch::median_pitch(&mono[a..b.max(a)], sr);
+        self.pitch_memo = Some((key, pitch));
+        pitch
+    }
+
+    /// Sets the window title. Only when it changes, as every viewport command forces a redraw.
+    pub fn set_title(&mut self, title: String) {
+        if title != self.last_title {
+            self.ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
+        }
     }
 
     pub fn ensure_spectrogram(&mut self, source: SourceId) {

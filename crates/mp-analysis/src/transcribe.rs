@@ -157,8 +157,14 @@ pub fn finish_transcript(segments: Vec<RawSegment>, mono: &[f32], sample_rate: f
         .map(|((raw, a), (start, end))| {
             let to_frame = |t: f64| ((t * sample_rate as f64) as usize).min(mono.len());
             let audio = &mono[to_frame(start)..to_frame(end).max(to_frame(start))];
+            // Refining moved the word's edges, so its phonemes scale to fit. Only moving the outer
+            // two could put an edge past the phoneme's other end when the word's edge moved far.
+            let scale = (end - start) / (a.end - a.start).max(1e-9);
             let mut phonemes = a.phonemes;
-            // The outer phonemes follow the word's refined edges.
+            for p in &mut phonemes {
+                p.start = start + (p.start - a.start) * scale;
+                p.end = start + (p.end - a.start) * scale;
+            }
             if let Some(first) = phonemes.first_mut() {
                 first.start = start;
             }
@@ -339,7 +345,7 @@ fn run_whisper(
 }
 
 /// Bump when recognition or alignment changes, so that old timings aren't reused.
-const TRANSCRIPT_VERSION: u32 = 2;
+const TRANSCRIPT_VERSION: u32 = 3;
 
 /// Where a transcript for a given audio file is cached, keyed by its path, size and mtime.
 pub fn cache_path(audio_path: &Path, model: &str) -> Option<PathBuf> {
@@ -387,6 +393,25 @@ mod tests {
         assert_eq!(t.words[1].text, "world");
         assert_eq!(t.words[0].phonemes[0].symbol, "hh");
         assert!(t.words[0].pitch_hz.is_some());
+    }
+
+    #[test]
+    fn phonemes_stay_ordered_when_word_edges_are_refined() {
+        // A word with a long silent start, the worst case for moving its first edge forward.
+        let sr = 48000.0;
+        let mut mono = vec![0f32; 48000];
+        mono.extend((0..24000).map(|i| (i as f32 * 0.05).sin() * 0.5));
+        mono.extend(vec![0f32; 24000]);
+        let word = |text: &str, anchor| RawWord { text: text.to_string(), anchor, confidence: 0.9 };
+        let raw = vec![RawSegment { start: 0.0, end: 2.0, words: vec![word("people", 1.0), word("up", 1.4)] }];
+        let t = finish_transcript(raw, &mono, sr, "test");
+        for w in &t.words {
+            assert!(w.end > w.start, "{w:?}");
+            for p in &w.phonemes {
+                assert!(p.end > p.start, "inverted phoneme in {w:?}");
+                assert!(p.start >= w.start - 1e-9 && p.end <= w.end + 1e-9, "{w:?}");
+            }
+        }
     }
 
     #[test]

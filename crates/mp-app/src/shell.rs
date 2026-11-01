@@ -1,7 +1,7 @@
 //! The window: top bar, panels, status bar and overlays.
 
 use crate::actions::{shortcut_text, Action, ACTIONS};
-use crate::app::{App, ToastKind};
+use crate::app::{AfterDiscard, App, ToastKind};
 use crate::jobs::file_stem;
 use crate::theme::*;
 use crate::timeline::{format_bars, format_time};
@@ -25,7 +25,11 @@ impl eframe::App for App {
         self.frame_start();
         crate::script::tick(self, &ctx);
         self.handle_drops(&ctx);
-        if !self.palette_open && self.export_dialog.is_none() {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.is_dirty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.pending_discard = Some(AfterDiscard::Quit);
+        }
+        if !self.palette_open && self.export_dialog.is_none() && self.pending_discard.is_none() {
             self.handle_shortcuts(&ctx);
         } else if ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, Key::K))) {
             self.palette_open = false;
@@ -61,6 +65,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(BG_0)).show(ui, |ui| self.arranger(ui));
 
         self.export_window(&ctx);
+        self.discard_window(&ctx);
         if self.palette_open {
             self.palette(&ctx);
         }
@@ -72,7 +77,7 @@ impl eframe::App for App {
         self.toasts_overlay(&ctx);
 
         let title = format!("{}{} — Mouthpiece", self.project.name, if self.is_dirty() { " ●" } else { "" });
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        self.set_title(title);
 
         // Redraw when something on screen is moving. Idle otherwise, to leave the CPU to audio.
         if self.engine.is_playing() || self.engine.shared.audition_total.load(std::sync::atomic::Ordering::Relaxed) > 0 || self.master_hold.iter().any(|p| *p > 0.001) {
@@ -92,7 +97,7 @@ impl App {
         for file in dropped {
             let path = file.path().to_path_buf();
             if path.extension().is_some_and(|e| e == crate::app::FILE_EXTENSION) {
-                self.open_project_at(&path);
+                self.after_discard(AfterDiscard::OpenPath(path));
             } else {
                 self.import_path(path);
             }
@@ -179,6 +184,10 @@ impl App {
                     self.run(action);
                     ui.close();
                 }
+            }
+            if self.has_autosave() && ui.button("Recover autosave").on_hover_text("Open the last automatic save of this project").clicked() {
+                self.recover_autosave();
+                ui.close();
             }
             ui.separator();
             let undo = self.history.undo_label().map(|l| format!("Undo {l}"));
@@ -272,6 +281,46 @@ impl App {
                 }
             });
         });
+    }
+
+    /// Asks what to do with unsaved changes before New, Open or Quit.
+    fn discard_window(&mut self, ctx: &egui::Context) {
+        let Some(next) = self.pending_discard.clone() else { return };
+        let mut choice = None;
+        let name = self.project.name.clone();
+        egui::Window::new("Unsaved changes")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label(format!("Save your changes to \"{name}\" first?"));
+                ui.label(egui::RichText::new("Without saving, they're lost. This can't be undone.").size(11.0).color(TEXT_FAINT));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if widgets::accent_button(ui, "Save").clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.button("Don't save").clicked() {
+                        choice = Some(false);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.pending_discard = None;
+                    }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.pending_discard = None;
+        }
+        if let Some(save) = choice {
+            self.pending_discard = None;
+            if save {
+                self.save();
+            }
+            // A cancelled or failed save leaves the changes unsaved, so stay put.
+            if !save || !self.is_dirty() {
+                self.perform(next);
+            }
+        }
     }
 
     fn palette(&mut self, ctx: &egui::Context) {

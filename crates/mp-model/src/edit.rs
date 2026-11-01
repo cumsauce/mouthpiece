@@ -118,11 +118,16 @@ impl Project {
 
     /// Moves a clip's start edge to `to`, keeping the audio under the rest of the clip in place.
     pub fn trim_start(&mut self, id: ClipId, to: Seconds) {
+        let Some(source_len) = self.clip(id).and_then(|c| self.source(c.source)).map(|s| s.duration) else {
+            return;
+        };
         let Some(clip) = self.clip_mut(id) else { return };
-        let to = to.clamp(
-            clip.start - clip.available_before() * clip.stretch,
-            clip.end() - MIN_CLIP_LEN,
-        ).max(0.0);
+        // A reversed clip's start plays the end of its range, so it extends into later source.
+        let available = if clip.reversed { source_len - clip.src_out } else { clip.src_in };
+        let earliest = clip.start - available.max(0.0) * clip.stretch;
+        // A clip already under the minimum length can't be shortened, but mustn't invert this range.
+        let latest = (clip.end() - MIN_CLIP_LEN).max(clip.start);
+        let to = to.clamp(earliest, latest).max(0.0);
         let delta = (to - clip.start) / clip.stretch;
         if clip.reversed {
             clip.src_out -= delta;
@@ -133,18 +138,15 @@ impl Project {
         clip.clamp_fades();
     }
 
-    /// Moves a clip's end edge to `to`. `source_len` limits how far it can be extended.
+    /// Moves a clip's end edge to `to`, up to the limit of the source.
     pub fn trim_end(&mut self, id: ClipId, to: Seconds) {
-        let Some(source_len) = self
-            .clip(id)
-            .and_then(|c| self.source(c.source))
-            .map(|s| s.duration)
-        else {
+        let Some(source_len) = self.clip(id).and_then(|c| self.source(c.source)).map(|s| s.duration) else {
             return;
         };
         let Some(clip) = self.clip_mut(id) else { return };
         let available = if clip.reversed { clip.src_in } else { source_len - clip.src_out };
-        let to = to.clamp(clip.start + MIN_CLIP_LEN, clip.end() + available * clip.stretch);
+        let earliest = (clip.start + MIN_CLIP_LEN).min(clip.end());
+        let to = to.clamp(earliest, clip.end() + available.max(0.0) * clip.stretch);
         let delta = (to - clip.end()) / clip.stretch;
         if clip.reversed {
             clip.src_in -= delta;
@@ -294,12 +296,6 @@ impl Project {
 }
 
 impl Clip {
-    fn available_before(&self) -> Seconds {
-        // Reversed clips extend into later source; the caller clamps against the source length
-        // for `trim_end`, and a start trim on a reversed clip can only reach what remains above.
-        if self.reversed { 0.0 } else { self.src_in }
-    }
-
     fn clamp_fades(&mut self) {
         let len = self.length();
         self.fade_in = self.fade_in.min(len);
@@ -377,6 +373,37 @@ mod tests {
         let clip = p.clip(c).unwrap();
         assert_eq!(clip.src_in, 0.0);
         assert_eq!(clip.src_out, 20.0);
+    }
+
+    #[test]
+    fn reversed_clip_can_extend_at_its_start() {
+        let (mut p, _, _, c) = project(); // plays source 2..12 from time 10
+        p.clip_mut(c).unwrap().reversed = true;
+        p.trim_start(c, 7.0);
+        let clip = p.clip(c).unwrap();
+        assert_eq!((clip.start, clip.src_in, clip.src_out), (7.0, 2.0, 15.0));
+    }
+
+    #[test]
+    fn trimming_a_very_short_clip_does_not_panic() {
+        let (mut p, _, _, c) = project();
+        p.clip_mut(c).unwrap().src_out = 2.001; // 1 ms long, under the minimum
+        p.trim_start(c, 10.0005);
+        p.trim_end(c, 10.0005);
+        p.clip_mut(c).unwrap().src_in = 0.0;
+        p.clip_mut(c).unwrap().src_out = 20.0; // no room left to extend
+        p.set_stretch(c, 0.1);
+        p.trim_end(c, 100.0);
+        assert!(p.clip(c).is_some());
+    }
+
+    #[test]
+    fn stretching_keeps_fades_inside_the_clip() {
+        let (mut p, _, _, c) = project();
+        p.clip_mut(c).unwrap().fade_out = 9.0;
+        p.set_stretch(c, 0.5); // now 5 s long
+        let clip = p.clip(c).unwrap();
+        assert!(clip.fade_in + clip.fade_out <= clip.length());
     }
 
     #[test]

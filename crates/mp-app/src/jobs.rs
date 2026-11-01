@@ -45,6 +45,27 @@ pub struct ActiveJob {
     pub label: String,
     pub fraction: Option<f32>,
     pub cancel: Arc<AtomicBool>,
+    /// Renders and model downloads carry on when a different project is opened.
+    outlives_project: bool,
+}
+
+/// Marks an event as relevant whichever project is open.
+const ANY_PROJECT: u64 = u64::MAX;
+
+/// Lets a background thread report back. Ids restart with each project, so each event is stamped
+/// with the project it belongs to, and the UI drops those from a project that's since been closed.
+#[derive(Clone)]
+struct Reporter {
+    tx: Sender<(u64, JobEvent)>,
+    project: u64,
+    ctx: egui::Context,
+}
+
+impl Reporter {
+    fn send(&self, event: JobEvent) {
+        let _ = self.tx.send((self.project, event));
+        self.ctx.request_repaint();
+    }
 }
 
 struct TranscribeJob {
@@ -53,13 +74,15 @@ struct TranscribeJob {
     request: TranscribeRequest,
     path: PathBuf,
     cancel: Arc<AtomicBool>,
+    reporter: Reporter,
 }
 
 pub struct Jobs {
-    tx: Sender<JobEvent>,
-    pub rx: Receiver<JobEvent>,
+    tx: Sender<(u64, JobEvent)>,
+    rx: Receiver<(u64, JobEvent)>,
     ctx: egui::Context,
     next_id: u64,
+    project: u64,
     pub active: Vec<ActiveJob>,
     transcribe_queue: Sender<TranscribeJob>,
 }
@@ -69,28 +92,51 @@ impl Jobs {
         let (tx, rx) = unbounded();
         let (transcribe_queue, queue) = unbounded::<TranscribeJob>();
         // One at a time: Whisper already uses every core.
-        let worker_tx = tx.clone();
-        let worker_ctx = ctx.clone();
         let _ = std::thread::Builder::new().name("transcribe".into()).spawn(move || {
             for job in queue.iter() {
-                run_transcribe(job, &worker_tx, &worker_ctx);
+                run_transcribe(job);
             }
         });
-        Self { tx, rx, ctx, next_id: 1, active: Vec::new(), transcribe_queue }
+        Self { tx, rx, ctx, next_id: 1, project: 0, active: Vec::new(), transcribe_queue }
     }
 
-    fn register(&mut self, label: String) -> (u64, Arc<AtomicBool>) {
+    /// Next event that still applies.
+    pub fn next_event(&self) -> Option<JobEvent> {
+        while let Ok((project, event)) = self.rx.try_recv() {
+            if project == self.project || project == ANY_PROJECT {
+                return Some(event);
+            }
+        }
+        None
+    }
+
+    /// Call when a different project opens: stops its work and ignores anything still on the way.
+    pub fn switch_project(&mut self) {
+        self.project += 1;
+        self.active.retain(|job| {
+            if !job.outlives_project {
+                job.cancel.store(true, Ordering::Relaxed);
+            }
+            job.outlives_project
+        });
+    }
+
+    fn reporter(&self, project: u64) -> Reporter {
+        Reporter { tx: self.tx.clone(), project, ctx: self.ctx.clone() }
+    }
+
+    fn register(&mut self, label: String, outlives_project: bool) -> (u64, Arc<AtomicBool>) {
         let id = self.next_id;
         self.next_id += 1;
         let cancel = Arc::new(AtomicBool::new(false));
-        self.active.push(ActiveJob { id, label, fraction: None, cancel: cancel.clone() });
+        self.active.push(ActiveJob { id, label, fraction: None, cancel: cancel.clone(), outlives_project });
         (id, cancel)
     }
 
     pub fn import(&mut self, path: PathBuf, sample_rate: u32, existing: Option<SourceId>) {
         let name = file_stem(&path);
-        let (job, _) = self.register(format!("Analyzing {name}"));
-        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        let (job, _) = self.register(format!("Analyzing {name}"), false);
+        let reporter = self.reporter(self.project);
         std::thread::spawn(move || {
             let event = match decode::decode_file(&path, sample_rate) {
                 Ok(audio) => {
@@ -108,46 +154,41 @@ impl Jobs {
                 }
                 Err(error) => JobEvent::ImportFailed { path, error },
             };
-            let _ = tx.send(event);
-            let _ = tx.send(JobEvent::Done { job });
-            ctx.request_repaint();
+            reporter.send(event);
+            reporter.send(JobEvent::Done { job });
         });
     }
 
     pub fn transcribe(&mut self, source: SourceId, name: &str, path: PathBuf, request: TranscribeRequest) {
-        let (job, cancel) = self.register(format!("Transcribing {name}"));
-        let _ = self.transcribe_queue.send(TranscribeJob { job, source, request, path, cancel });
+        let (job, cancel) = self.register(format!("Transcribing {name}"), false);
+        let reporter = self.reporter(self.project);
+        let _ = self.transcribe_queue.send(TranscribeJob { job, source, request, path, cancel, reporter });
         self.ctx.request_repaint();
     }
 
     pub fn spectrogram(&mut self, source: SourceId, mono: Arc<Vec<f32>>, sample_rate: f32) {
-        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        let reporter = self.reporter(self.project);
         std::thread::spawn(move || {
             let spectrogram = Arc::new(mp_analysis::spectrogram::compute(&mono, sample_rate));
-            let _ = tx.send(JobEvent::Spectrogram { source, spectrogram });
-            ctx.request_repaint();
+            reporter.send(JobEvent::Spectrogram { source, spectrogram });
         });
     }
 
     pub fn download_model(&mut self, model: WhisperModel) {
-        let (job, cancel) = self.register(format!("Downloading {} model", model.label));
-        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        let (job, cancel) = self.register(format!("Downloading {} model", model.label), true);
+        let reporter = self.reporter(ANY_PROJECT);
         std::thread::spawn(move || {
-            let (ptx, pctx) = (tx.clone(), ctx.clone());
+            let progress = reporter.clone();
             let result = transcribe::download_model(
                 &model,
-                move |fraction| {
-                    let _ = ptx.send(JobEvent::Progress { job, fraction });
-                    pctx.request_repaint();
-                },
+                move |fraction| progress.send(JobEvent::Progress { job, fraction }),
                 &cancel,
             );
-            let _ = tx.send(match result {
+            reporter.send(match result {
                 Ok(()) => JobEvent::ModelReady(model),
                 Err(error) => JobEvent::DownloadFailed { error },
             });
-            let _ = tx.send(JobEvent::Done { job });
-            ctx.request_repaint();
+            reporter.send(JobEvent::Done { job });
         });
     }
 
@@ -160,8 +201,8 @@ impl Jobs {
         settings: ExportSettings,
         path: PathBuf,
     ) {
-        let (job, cancel) = self.register(format!("Rendering {}", file_stem(&path)));
-        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        let (job, cancel) = self.register(format!("Rendering {}", file_stem(&path)), true);
+        let reporter = self.reporter(ANY_PROJECT);
         std::thread::spawn(move || {
             // The first compile queues any clip renders that aren't ready yet. The second, once
             // they've landed, gets the final audio, with fresh devices that have no leftover tails.
@@ -169,27 +210,21 @@ impl Jobs {
             cache.wait_idle();
             let graph = GraphCompiler::default().compile(&project, &bank, &cache, sample_rate);
             let seconds = settings.end.saturating_sub(settings.start) as f64 / sample_rate as f64;
-            let (ptx, pctx) = (tx.clone(), ctx.clone());
+            let progress = reporter.clone();
             let mut last = 0.0;
             let result = mp_export::export(graph, sample_rate, &settings, &path, |p| {
                 if p - last >= 0.01 {
                     last = p;
-                    let _ = ptx.send(JobEvent::Progress { job, fraction: p });
-                    pctx.request_repaint();
+                    progress.send(JobEvent::Progress { job, fraction: p });
                 }
                 !cancel.load(Ordering::Relaxed)
             });
             match result {
-                Ok(true) => {
-                    let _ = tx.send(JobEvent::Exported { path, seconds });
-                }
+                Ok(true) => reporter.send(JobEvent::Exported { path, seconds }),
                 Ok(false) => {}
-                Err(error) => {
-                    let _ = tx.send(JobEvent::ExportFailed { error });
-                }
+                Err(error) => reporter.send(JobEvent::ExportFailed { error }),
             }
-            let _ = tx.send(JobEvent::Done { job });
-            ctx.request_repaint();
+            reporter.send(JobEvent::Done { job });
         });
     }
 
@@ -204,19 +239,16 @@ impl Jobs {
     }
 }
 
-fn run_transcribe(job: TranscribeJob, tx: &Sender<JobEvent>, ctx: &egui::Context) {
-    let TranscribeJob { job, source, request, path, cancel } = job;
+fn run_transcribe(job: TranscribeJob) {
+    let TranscribeJob { job, source, request, path, cancel, reporter } = job;
     if !cancel.load(Ordering::Relaxed) {
-        let (ptx, pctx) = (tx.clone(), ctx.clone());
+        let progress = reporter.clone();
         let result = transcribe::transcribe(
             &request,
-            move |fraction| {
-                let _ = ptx.send(JobEvent::Progress { job, fraction });
-                pctx.request_repaint();
-            },
+            move |fraction| progress.send(JobEvent::Progress { job, fraction }),
             cancel,
         );
-        let _ = tx.send(match result {
+        reporter.send(match result {
             Ok(transcript) => {
                 transcribe::save_cached(&path, request.model.id, &transcript);
                 JobEvent::Transcribed { source, transcript }
@@ -224,8 +256,7 @@ fn run_transcribe(job: TranscribeJob, tx: &Sender<JobEvent>, ctx: &egui::Context
             Err(error) => JobEvent::TranscribeFailed { error },
         });
     }
-    let _ = tx.send(JobEvent::Done { job });
-    ctx.request_repaint();
+    reporter.send(JobEvent::Done { job });
 }
 
 pub fn file_stem(path: &std::path::Path) -> String {

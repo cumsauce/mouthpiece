@@ -54,16 +54,11 @@ impl App {
             let mut pan = track.pan;
             let r = ui.add(egui::Slider::new(&mut pan, -1.0..=1.0).show_value(false));
             if r.changed() {
+                self.begin_gesture("Change track pan");
                 if let Some(t) = self.project.track_mut(id) {
                     t.pan = pan;
                 }
                 self.needs_compile = true;
-            }
-            if r.drag_started() {
-                self.begin_gesture("Change track pan");
-            }
-            if r.drag_stopped() {
-                self.end_gesture();
             }
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;

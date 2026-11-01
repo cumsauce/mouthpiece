@@ -1,8 +1,8 @@
 //! Every command in the app, with its name and shortcut. The command palette, the keyboard handler
 //! and the shortcut sheet all read from this one table.
 
-use crate::app::{App, BottomTab, ToastKind};
-use eframe::egui::{Context, Key, KeyboardShortcut, Modifiers};
+use crate::app::{AfterDiscard, App, BottomTab, ToastKind};
+use eframe::egui::{Context, Event, Key, KeyboardShortcut, Modifiers};
 use mp_model::{Clip, ClipId, ClipMode, DeviceKind, TrackKind};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,7 +126,7 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::ToggleInspector, "Show / hide inspector", key(NONE, Key::I), "View"),
     (Action::ToggleBrowser, "Show / hide word browser", key(NONE, Key::B), "View"),
     (Action::Palette, "Command palette", key(CMD, Key::K), "View"),
-    (Action::Shortcuts, "Keyboard shortcuts", key(SHIFT, Key::Slash), "View"),
+    (Action::Shortcuts, "Keyboard shortcuts", key(NONE, Key::Questionmark), "View"),
     (Action::New, "New project", key(CMD, Key::N), "File"),
     (Action::Open, "Open project", key(CMD, Key::O), "File"),
     (Action::Save, "Save", key(CMD, Key::S), "File"),
@@ -168,7 +168,6 @@ pub fn shortcut_text(shortcut: &KeyboardShortcut) -> String {
         Key::CloseBracket => "]",
         Key::Equals => "=",
         Key::Minus => "-",
-        Key::Slash => "/",
         Key::Num0 => "0",
         Key::Num1 => "1",
         Key::Num2 => "2",
@@ -189,8 +188,23 @@ impl App {
             let m = s.modifiers;
             std::cmp::Reverse(m.shift as u8 + m.command as u8 + m.alt as u8)
         });
+        // The windowing layer turns these two into clipboard events and sends no key press for them.
+        // A text field that's being typed in takes them itself.
+        if !typing {
+            let (copy, paste) = ctx.input(|i| {
+                (i.events.iter().any(|e| matches!(e, Event::Copy)), i.events.iter().any(|e| matches!(e, Event::Paste(_))))
+            });
+            if copy {
+                self.run(Action::Copy);
+            }
+            if paste {
+                self.run(Action::Paste);
+            }
+        }
+        // While typing, these belong to the text field, however much they'd also mean to the project.
+        const TEXT_EDITING: [Action; 4] = [Action::Undo, Action::Redo, Action::SelectAll, Action::DeleteTrack];
         for (action, shortcut) in ordered {
-            if typing && !shortcut.modifiers.command {
+            if typing && (!shortcut.modifiers.command || TEXT_EDITING.contains(&action)) {
                 continue;
             }
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
@@ -215,6 +229,17 @@ impl App {
         });
     }
 
+    fn scale_selected_stretch(&mut self, label: &str, factor: f64) {
+        let ids = self.selection.clone();
+        self.edit(label, |p| {
+            for id in ids {
+                if let Some(stretch) = p.clip(id).map(|c| c.stretch) {
+                    p.set_stretch(id, stretch * factor);
+                }
+            }
+        });
+    }
+
     pub fn grid_or_small_step(&self) -> f64 {
         self.project.beat_seconds() * self.grid_division.max(1.0 / 16.0)
     }
@@ -228,8 +253,8 @@ impl App {
             Action::ToggleMetronome => self.edit("Toggle metronome", |p| p.metronome = !p.metronome),
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
-            Action::New => self.new_project(),
-            Action::Open => self.open_dialog(),
+            Action::New => self.after_discard(AfterDiscard::New),
+            Action::Open => self.after_discard(AfterDiscard::Open),
             Action::Save => self.save(),
             Action::SaveAs => self.save_as(),
             Action::Import => self.import_dialog(),
@@ -246,8 +271,8 @@ impl App {
             Action::MuteClip => self.edit_selected("Mute clip", |c| c.muted = !c.muted),
             Action::PitchUp => self.edit_selected("Pitch up", |c| c.pitch = (c.pitch + 1.0).min(48.0)),
             Action::PitchDown => self.edit_selected("Pitch down", |c| c.pitch = (c.pitch - 1.0).max(-48.0)),
-            Action::Faster => self.edit_selected("Speed up", |c| c.stretch = (c.stretch / 1.1).clamp(0.1, 16.0)),
-            Action::Slower => self.edit_selected("Slow down", |c| c.stretch = (c.stretch * 1.1).clamp(0.1, 16.0)),
+            Action::Faster => self.scale_selected_stretch("Speed up", 1.0 / 1.1),
+            Action::Slower => self.scale_selected_stretch("Slow down", 1.1),
             Action::ResetStretch => self.edit_selected("Reset stretch and pitch", |c| {
                 c.stretch = 1.0;
                 c.pitch = 0.0;
@@ -366,7 +391,7 @@ impl App {
     fn zoom_to_selection(&mut self) {
         if let Some((a, b)) = self.selection_span() {
             self.arr_view.fit(a, b);
-            self.editor.view.fit(a, b);
+            self.editor.pending_fit = Some((a, b));
         }
     }
 
@@ -434,6 +459,9 @@ impl App {
             .collect();
         let n = self.clipboard.len();
         if n > 0 {
+            // A clipboard with no text produces no paste event, so this also has to put text there.
+            let names: Vec<String> = self.clipboard.iter().map(|(c, _)| self.clip_label(c)).collect();
+            self.ctx.copy_text(names.join(" "));
             self.toast(ToastKind::Info, format!("Copied {n} clip{}", if n == 1 { "" } else { "s" }));
         }
     }
@@ -531,15 +559,11 @@ impl App {
     /// Moves each selected clip to the nearest note of the project's key, or the nearest semitone
     /// when no key is set.
     pub fn snap_selection_pitch(&mut self) {
-        let sr = self.sample_rate as f32;
         let key = self.project.key;
         let mut shifts = Vec::new();
         let mut unpitched = 0;
         for clip in self.selected_clips() {
-            let Some(buffer) = self.runtime.get(&clip.source) else { continue };
-            let a = ((clip.src_in * sr as f64) as usize).min(buffer.mono.len());
-            let b = ((clip.src_out * sr as f64) as usize).min(buffer.mono.len());
-            match mp_dsp::pitch::median_pitch(&buffer.mono[a..b.max(a)], sr) {
+            match self.clip_pitch(clip.source, clip.src_in, clip.src_out) {
                 Some(hz) => {
                     let original = mp_dsp::hz_to_midi(hz);
                     let current = original + clip.pitch;

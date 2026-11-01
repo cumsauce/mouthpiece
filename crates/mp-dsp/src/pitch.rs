@@ -3,10 +3,12 @@
 /// Median pitch of a mono signal in Hz, or `None` if it isn't clearly pitched.
 pub fn median_pitch(x: &[f32], sample_rate: f32) -> Option<f32> {
     let window = (sample_rate * 0.03) as usize;
-    let hop = window / 2;
     if x.len() < window * 2 {
         return None;
     }
+    // Evenly spaced samples of a long clip give the same median at a bounded cost.
+    const MAX_FRAMES: usize = 40;
+    let hop = (window / 2).max((x.len() - window * 2) / MAX_FRAMES).max(1);
     let mut pitches: Vec<f32> = (0..=(x.len() - window * 2) / hop)
         .filter_map(|i| yin(&x[i * hop..i * hop + window * 2], window, sample_rate))
         .collect();

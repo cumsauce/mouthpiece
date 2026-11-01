@@ -490,6 +490,9 @@ impl App {
             let Some(buffer) = self.bank.get(SourceId(hit.source)) else { continue };
             let a = ((hit.start * sr) as usize).min(buffer.frames());
             let b = ((hit.end * sr) as usize).min(buffer.frames());
+            if b <= a {
+                continue;
+            }
             // A short fade at each end, as a placed clip would have.
             let fade = ((0.004 * sr) as usize).max(1).min((b - a) / 2 + 1);
             let start = out.frames();

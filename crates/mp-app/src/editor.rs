@@ -16,6 +16,8 @@ const PHONEMES_H: f32 = 22.0;
 pub struct EditorState {
     pub view: TimeView,
     pub needs_fit: bool,
+    /// A time range to fit once the view's width is known. Takes priority over `needs_fit`.
+    pub pending_fit: Option<(f64, f64)>,
     pub hovered: bool,
     /// Selected time range on the arrangement.
     pub range: Option<(f64, f64)>,
@@ -32,6 +34,7 @@ impl Default for EditorState {
         Self {
             view: TimeView::new(120.0),
             needs_fit: true,
+            pending_fit: None,
             hovered: false,
             range: None,
             range_drag_origin: None,
@@ -164,6 +167,8 @@ impl App {
     fn detail_editor(&mut self, ui: &mut Ui) {
         let area = ui.available_rect_before_wrap();
         ui.allocate_rect(area, Sense::hover());
+        self.editor.view.left = area.left();
+        self.editor.view.width = area.width();
         let Some(track) = self.selected_track.and_then(|t| self.project.track(t)).cloned() else {
             ui.painter().text(
                 area.center(),
@@ -179,8 +184,6 @@ impl App {
                 self.ensure_spectrogram(clip.source);
             }
         }
-        self.editor.view.left = area.left();
-        self.editor.view.width = area.width();
         if self.editor.last_track != Some(track.id) && self.editor.last_track.is_some() {
             self.editor.needs_fit = true;
             self.editor.range = None;
@@ -193,6 +196,9 @@ impl App {
                 self.editor.view.fit(start, end);
             }
             self.editor.needs_fit = false;
+        }
+        if let Some((a, b)) = self.editor.pending_fit.take() {
+            self.editor.view.fit(a, b);
         }
         if self.engine.is_playing() && self.clip_drag.is_none() {
             let head = self.playhead;
@@ -376,8 +382,7 @@ impl App {
                     let tile_seconds = TILE * seconds_per_column;
                     let first = (clip.src_in / tile_seconds) as usize;
                     let last = (clip.src_out / tile_seconds) as usize;
-                    for i in first..=last.min(tiles.len().saturating_sub(1)) {
-                        let tile = &tiles[i];
+                    for (i, tile) in tiles.iter().enumerate().take(last + 1).skip(first) {
                         let tile_start = i as f64 * tile_seconds;
                         let tile_len = tile.size()[0] as f64 * seconds_per_column;
                         let a = clip.src_in.max(tile_start);
