@@ -206,6 +206,14 @@ pub fn plan(heard: &[HeardWord], lines: &[LyricLine]) -> Result<(Vec<RawSegment>
             _ => segments.push(RawSegment { start: word.anchor, end: word.anchor, words: vec![raw] }),
         }
     }
+    // So far a phrase runs between the middles of its outer words, and those can be long held notes.
+    for segment in &mut segments {
+        let (first, last) = (segment.start, segment.end);
+        for w in heard.iter().filter(|w| (first..=last).contains(&anchor(w))) {
+            segment.start = segment.start.min(w.start);
+            segment.end = segment.end.max(w.end);
+        }
+    }
     Ok((segments, report))
 }
 

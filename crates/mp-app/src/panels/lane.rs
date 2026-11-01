@@ -36,7 +36,7 @@ impl Zone {
 
     pub fn hint(self) -> &'static str {
         match self {
-            Zone::Body => "Drag to move. Alt-drag to copy. In a word, click again to select one piece. Double-click to edit.",
+            Zone::Body => "Drag to move, cutting into what's under it. Alt-drag to copy. In a word, click again to select one piece. Double-click to edit.",
             Zone::TrimStart | Zone::TrimEnd => "Drag to trim. Alt-drag to stretch.",
             Zone::StretchStart | Zone::StretchEnd => "Drag to stretch.",
             Zone::FadeIn | Zone::FadeOut => "Drag to set the fade.",
@@ -417,6 +417,23 @@ impl App {
     }
 
     pub fn end_clip_drag(&mut self) {
+        if let Some(drag) = self.clip_drag.take().filter(|d| d.zone == Zone::Body) {
+            let was_on = |index: usize| self.project.tracks.get(index).map(|t| t.id);
+            let dropped: Vec<(ClipId, bool)> = drag
+                .originals
+                .iter()
+                .filter_map(|(id, start, track)| {
+                    let arrived = self.project.track_of_clip(*id) != was_on(*track);
+                    let moved = arrived || self.project.clip(*id)?.start != *start;
+                    moved.then_some((*id, arrived))
+                })
+                .collect();
+            if !dropped.is_empty() {
+                self.project.cut_under(&dropped);
+                self.selection.retain(|id| self.project.clip(*id).is_some());
+                self.needs_compile = true;
+            }
+        }
         self.clip_drag = None;
         self.snap_line = None;
         self.end_gesture();

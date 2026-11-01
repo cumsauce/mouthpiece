@@ -95,7 +95,8 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 - **Needs:**
   - **Groups.** The pieces move and quantize as one word. Clicking again selects one piece to adjust it.
   - **Crossfades you can hear while dragging.** Overlapping two clips fades one into the other for as long as
-    they overlap, and pulling them apart undoes it.
+    they overlap, and pulling them apart undoes it. That's for a clip moved along its own track and partly over
+    a neighbour. Dropped anywhere else, a clip cuts a space for itself in what's under it.
   - **A library.** Saved words come first in Say and are listed in My words.
   - **A way back, always.** Recordings are never changed. Saved words are never changed by editing a placed
     copy. "Revert to saved" and "Restore original" go back from any experiment.

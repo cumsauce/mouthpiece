@@ -136,7 +136,13 @@ pub fn finish_transcript(segments: Vec<RawSegment>, mono: &[f32], sample_rate: f
 
     let mut aligned: Vec<(RawWord, align::AlignedWord)> = Vec::new();
     for (i, segment) in segments.iter().enumerate() {
-        let (from, to) = (splits[i], splits[i + 1]);
+        // A phrase is only aligned over the audio around it. A long instrumental after it would
+        // otherwise go to its last word, and throw off how fast the whole phrase seems to be.
+        const PHRASE_MARGIN: f64 = 0.5;
+        let first_anchor = segment.words.first().map_or(segment.start, |w| w.anchor);
+        let last_anchor = segment.words.last().map_or(segment.end, |w| w.anchor);
+        let from = splits[i].max(segment.start.min(first_anchor) - PHRASE_MARGIN);
+        let to = splits[i + 1].min(segment.end.max(last_anchor) + PHRASE_MARGIN).max(from);
         let to_frame = |t: f64| ((t * sample_rate as f64) as usize).min(mono.len());
         let audio = &mono[to_frame(from)..to_frame(to).max(to_frame(from))];
         let phrase: Vec<align::PhraseWord> = segment
@@ -349,7 +355,7 @@ fn run_whisper(
 }
 
 /// Bump when recognition or alignment changes, so that old timings aren't reused.
-const TRANSCRIPT_VERSION: u32 = 3;
+const TRANSCRIPT_VERSION: u32 = 4;
 
 /// Where a transcript for a given audio file is cached, keyed by its path, size and mtime.
 pub fn cache_path(audio_path: &Path, model: &str) -> Option<PathBuf> {
@@ -417,6 +423,20 @@ mod tests {
                 assert!(p.start >= w.start - 1e-9 && p.end <= w.end + 1e-9, "{w:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_long_instrumental_does_not_go_to_the_last_word() {
+        // A word from 1 to 1.4 s, then 10 s of steady sound that isn't the voice.
+        let sr = 16000.0;
+        let n = |s: f64| (s * sr as f64) as usize;
+        let tone = |len: usize, amp: f32| (0..len).map(move |i| amp * (i as f32 * 0.08).sin());
+        let mut mono = vec![0f32; n(1.0)];
+        mono.extend(tone(n(0.4), 0.8));
+        mono.extend(tone(n(10.0), 0.5));
+        let raw = RawWord { text: "love".to_string(), anchor: 1.2, confidence: 1.0 };
+        let t = finish_transcript(vec![RawSegment { start: 1.0, end: 1.4, words: vec![raw] }], &mono, sr, "test");
+        assert!(t.words[0].end < 2.1, "{:?}", t.words[0]);
     }
 
     #[test]

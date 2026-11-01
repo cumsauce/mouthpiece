@@ -299,6 +299,10 @@ pub fn quietest_point(mono: &[f32], sr: f32, around: f64, reach: f64, earliest: 
 pub fn refine_boundaries(mono: &[f32], sr: f32, words: &mut [(f64, f64)]) {
     const LOOK_BEFORE: f64 = 0.12;
     const LOOK_AFTER: f64 = 0.08;
+    /// About -36 dB. Words die away more softly than they begin.
+    const END_FLOOR: f32 = 0.00025;
+    /// The longest silence inside a word's ending.
+    const CLOSURE: f64 = 0.08;
     let hop = ((0.002 * sr as f64) as usize).max(1);
     let win = hop * 3;
     let energy_at = |t: f64| -> f32 {
@@ -337,12 +341,19 @@ pub fn refine_boundaries(mono: &[f32], sr: f32, words: &mut [(f64, f64)]) {
             new_start += step;
         }
 
+        // End: walk on through the sound. A final consonant is often quieter than that and comes after
+        // a brief silence, as in the "t" of "cat", so the word only ends once the quiet has lasted.
+        let end_floor = peak * END_FLOOR;
         let latest = (end + LOOK_BEFORE).min(next_start);
         let mut new_end = (end - LOOK_AFTER).max((start + end) * 0.5).max(new_start + step);
-        while new_end < latest && energy_at(new_end) > floor {
-            new_end += step;
+        let mut walked = new_end;
+        while walked < latest && walked - new_end <= CLOSURE {
+            walked += step;
+            if energy_at(walked - step) > end_floor {
+                new_end = walked;
+            }
         }
-        while new_end > new_start + step && energy_at(new_end - step) <= floor {
+        while new_end > new_start + step && energy_at(new_end - step) <= end_floor {
             new_end -= step;
         }
         words[i] = (new_start.max(earliest), new_end.min(latest));
@@ -447,6 +458,31 @@ mod tests {
         refine_boundaries(&x, SR, &mut words);
         assert!((words[0].0 - 1.0).abs() < 0.01, "start {}", words[0].0);
         assert!((words[0].1 - 1.5).abs() < 0.01, "end {}", words[0].1);
+    }
+
+    #[test]
+    fn a_final_consonant_after_a_short_silence_stays_in_the_word() {
+        // "cat": a vowel to 1.3 s, 50 ms of closure, then a quiet 40 ms burst, which ends at 1.39 s.
+        let mut x = vec![0f32; 48000];
+        x.extend(tone(14400, 0.8));
+        x.extend(vec![0f32; 2400]);
+        x.extend(noise(1920, 0.03));
+        x.extend(vec![0f32; 48000]);
+        let mut words = [(1.0, 1.36)];
+        refine_boundaries(&x, SR, &mut words);
+        assert!((words[0].1 - 1.39).abs() < 0.015, "ends at {}", words[0].1);
+    }
+
+    #[test]
+    fn a_word_does_not_run_on_into_a_later_sound() {
+        // The word ends at 1.3 s. A breath starts 200 ms later.
+        let mut x = vec![0f32; 48000];
+        x.extend(tone(14400, 0.8));
+        x.extend(vec![0f32; 9600]);
+        x.extend(noise(9600, 0.1));
+        let mut words = [(1.0, 1.32)];
+        refine_boundaries(&x, SR, &mut words);
+        assert!((words[0].1 - 1.3).abs() < 0.015, "ends at {}", words[0].1);
     }
 
     #[test]

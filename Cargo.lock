@@ -2288,7 +2288,7 @@ dependencies = [
 
 [[package]]
 name = "mp-analysis"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "flate2",
  "hound",
@@ -2306,7 +2306,7 @@ dependencies = [
 
 [[package]]
 name = "mp-app"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "crossbeam-channel",
  "eframe",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "mp-dsp"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "rustfft",
  "signalsmith-stretch",
@@ -2336,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "mp-engine"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "mp-export"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "hound",
  "mp-analysis",
@@ -2362,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "mp-model"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2370,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "mp-vfx"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "mp-analysis",
  "mp-engine",

@@ -109,9 +109,11 @@ to add it to your line.
 ### Making words that don't exist
 
 Type a word that was never said and it's stitched from sounds, as a group of clips that are already blended. Click
-a piece of the group to adjust it, or drag a clip's name strip in the editor. Overlapping clips crossfade for as
-long as they overlap, and `X` blends any selection. When it sounds right, press `⇧W` to name it. After that, typing
-its name uses it, and it's listed under My words.
+a piece of the group to adjust it, or drag a clip's name strip in the editor. Clips moved along a track crossfade
+for as long as they partly overlap, and `X` blends any selection. When it sounds right, press `⇧W` to name it. After
+that, typing its name uses it, and it's listed under My words.
+
+A clip dragged to another track, or dropped inside a longer clip, cuts a space for itself in what's under it.
 
 Nothing you do changes your recordings, and editing a placed copy doesn't change the saved word. Revert to saved
 and Restore original (`⇧R`) go back from any experiment.

@@ -684,7 +684,9 @@ impl App {
                 let target = track_index.map(|i| self.project.tracks[i].id);
                 let placed = self.edit(&format!("Place \"{}\"", hit.text), |p| {
                     let track = target.unwrap_or_else(|| App::sentence_track(p));
-                    App::place_hit_at(p, &hit, track, start).map(|c| (c, track))
+                    let clip = App::place_hit_at(p, &hit, track, start)?;
+                    p.cut_under(&[(clip, true)]);
+                    Some((clip, track))
                 });
                 if let Some((clip, track)) = placed {
                     self.selection = vec![clip];
@@ -722,7 +724,9 @@ impl App {
                 let target = track_index.map(|i| self.project.tracks[i].id);
                 let (placed, track) = self.edit(&format!("Place \"{name}\""), |p| {
                     let track = target.unwrap_or_else(|| App::sentence_track(p));
-                    (p.place_word(word, track, start), track)
+                    let placed = p.place_word(word, track, start);
+                    p.cut_under(&placed.iter().map(|c| (*c, true)).collect::<Vec<_>>());
+                    (placed, track)
                 });
                 self.after_place(&placed, track);
                 self.selection = placed;

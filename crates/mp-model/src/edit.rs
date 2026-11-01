@@ -327,6 +327,65 @@ impl Project {
         }
     }
 
+    // ----- Cutting in -----
+
+    /// Makes room for clips just dropped, by cutting away what's under them on their track. Each comes
+    /// with whether it arrived from elsewhere. One moved along its own track still crossfades with a
+    /// neighbour it only partly overlaps, as that's how words are joined.
+    pub fn cut_under(&mut self, dropped: &[(ClipId, bool)]) {
+        let keep: Vec<ClipId> = dropped.iter().map(|d| d.0).collect();
+        for (id, arrived) in dropped {
+            let Some(track) = self.track_of_clip(*id) else { continue };
+            let Some((from, to, patch)) = self.clip(*id).map(|c| (c.start, c.end(), c.patch)) else { continue };
+            let under: Vec<ClipId> = self.track(track).map_or(Vec::new(), |t| {
+                t.clips
+                    .iter()
+                    .filter(|c| !keep.contains(&c.id) && c.patch == patch && c.start < to && c.end() > from)
+                    .filter(|c| *arrived || !((c.start < from && c.end() < to) || (from < c.start && to < c.end())))
+                    .map(|c| c.id)
+                    .collect()
+            });
+            for clip in under {
+                self.cut_out(clip, from, to);
+            }
+        }
+        self.update_auto_crossfades();
+    }
+
+    /// Removes `from..to` of a clip, leaving whatever is either side of it with anti-click fades.
+    fn cut_out(&mut self, id: ClipId, from: Seconds, to: Seconds) {
+        let Some((start, end)) = self.clip(id).map(|c| (c.start, c.end())) else { return };
+        let left = start + MIN_CLIP_LEN < from;
+        let right = end - MIN_CLIP_LEN > to;
+        let right_part = match (left, right) {
+            (false, false) => {
+                self.remove_clip(id);
+                return;
+            }
+            (true, true) => self.split_clip(id, from),
+            (true, false) => {
+                self.trim_end(id, from);
+                None
+            }
+            (false, true) => Some(id),
+        };
+        if left {
+            if let Some(c) = self.clip_mut(id) {
+                c.fade_out = SPLICE_FADE.min(c.length());
+                c.fade_out_auto = false;
+                c.clamp_fades();
+            }
+        }
+        if let Some(part) = right_part {
+            self.trim_start(part, to);
+            if let Some(c) = self.clip_mut(part) {
+                c.fade_in = SPLICE_FADE.min(c.length());
+                c.fade_in_auto = false;
+                c.clamp_fades();
+            }
+        }
+    }
+
     // ----- Made words -----
 
     pub fn word(&self, id: WordId) -> Option<&MadeWord> {
@@ -567,6 +626,57 @@ mod tests {
         let s = p.add_source("v.wav".into(), "v".into(), 20.0, TrackKind::Vocal);
         let c = p.add_clip(t, s, 10.0, 2.0, 12.0).unwrap();
         (p, t, s, c)
+    }
+
+    #[test]
+    fn a_clip_arriving_on_a_track_cuts_a_space_for_itself() {
+        let (mut p, t, s, c) = project();
+        let other = p.add_track("Other", TrackKind::Vocal);
+        let d = p.add_clip(other, s, 12.0, 0.0, 1.0).unwrap();
+        p.move_clip_to_track(d, t);
+        p.cut_under(&[(d, true)]);
+        let track = p.track(t).unwrap();
+        assert_eq!(track.clips.len(), 3);
+        let (left, right) = (&track.clips[0], &track.clips[2]);
+        assert_eq!((left.id, left.start, left.end(), left.src_out), (c, 10.0, 12.0, 4.0));
+        assert_eq!((right.start, right.end(), right.src_in, right.src_out), (13.0, 20.0, 5.0, 12.0));
+        assert_eq!((left.fade_out, right.fade_in), (SPLICE_FADE, SPLICE_FADE));
+        assert_eq!(track.clips[1].id, d);
+    }
+
+    #[test]
+    fn a_clip_arriving_trims_what_it_partly_covers_and_removes_what_it_hides() {
+        let (mut p, t, s, c) = project();
+        let hidden = p.add_clip(t, s, 22.0, 0.0, 1.0).unwrap();
+        let d = p.add_clip(t, s, 18.0, 0.0, 6.0).unwrap();
+        p.cut_under(&[(d, true)]);
+        assert_eq!(p.clip(c).unwrap().end(), 18.0);
+        assert!(p.clip(hidden).is_none());
+        assert_eq!((p.clip(d).unwrap().start, p.clip(d).unwrap().end()), (18.0, 24.0));
+    }
+
+    #[test]
+    fn a_clip_moved_along_its_track_still_crossfades_but_cuts_into_a_longer_one() {
+        let (mut p, t, s, c) = project();
+        let joined = p.add_clip(t, s, 19.0, 0.0, 2.0).unwrap();
+        p.cut_under(&[(joined, false)]);
+        assert_eq!(p.track(t).unwrap().clips.len(), 2);
+        assert_eq!(p.clip(c).unwrap().end(), 20.0);
+        assert_eq!(p.clip(joined).unwrap().fade_in, 1.0);
+
+        let inside = p.add_clip(t, s, 12.0, 0.0, 1.0).unwrap();
+        p.cut_under(&[(inside, false)]);
+        assert_eq!(p.clip(c).unwrap().end(), 12.0);
+        assert_eq!(p.track(t).unwrap().clips.len(), 4);
+    }
+
+    #[test]
+    fn clips_dropped_together_do_not_cut_each_other() {
+        let (mut p, t, s, _) = project();
+        let a = p.add_clip(t, s, 30.0, 0.0, 2.0).unwrap();
+        let b = p.add_clip(t, s, 31.0, 0.0, 2.0).unwrap();
+        p.cut_under(&[(a, true), (b, true)]);
+        assert_eq!((p.clip(a).unwrap().src_out, p.clip(b).unwrap().src_out), (2.0, 2.0));
     }
 
     #[test]
