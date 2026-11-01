@@ -1,6 +1,7 @@
 //! Pure edit operations. All are non-destructive: they only change clip metadata.
 
 use crate::*;
+use std::collections::{HashMap, HashSet};
 
 /// Fades applied to clips cut from a longer recording so the cut points don't click.
 pub const SPLICE_FADE: Seconds = 0.004;
@@ -27,7 +28,7 @@ impl Project {
             pan: 0.0,
             mute: false,
             solo: false,
-            height: 84.0,
+            height: 76.0,
             clips: Vec::new(),
             devices: Vec::new(),
         });
@@ -40,7 +41,7 @@ impl Project {
 
     pub fn add_source(&mut self, path: PathBuf, name: String, duration: Seconds, kind: TrackKind) -> SourceId {
         let id = SourceId(self.alloc_id());
-        self.sources.push(Source { id, path, name, duration, bpm: None, kind });
+        self.sources.push(Source { id, path, name, duration, bpm: None, kind, has_video: false });
         id
     }
 
@@ -74,6 +75,7 @@ impl Project {
         clip.fade_in = SPLICE_FADE;
         clip.fade_out = SPLICE_FADE;
         clip.label = label;
+        clip.origin = Some((src_in, src_out));
         Some(id)
     }
 
@@ -156,6 +158,245 @@ impl Project {
         clip.clamp_fades();
     }
 
+    /// Gives a clip different audio, keeping its position and everything done to it.
+    pub fn swap_clip_audio(&mut self, id: ClipId, source: SourceId, src_in: Seconds, src_out: Seconds) {
+        if let Some(clip) = self.clip_mut(id) {
+            clip.source = source;
+            clip.src_in = src_in;
+            clip.src_out = src_out;
+            clip.origin = Some((src_in, src_out));
+            clip.clamp_fades();
+        }
+    }
+
+    /// Takes a clip back to how it was first placed, keeping its position. Nothing done to a clip ever
+    /// touches its recording, so this is always possible.
+    pub fn restore_original(&mut self, id: ClipId) {
+        let Some(duration) = self.clip(id).and_then(|c| self.source(c.source)).map(|s| s.duration) else { return };
+        let Some(clip) = self.clip_mut(id) else { return };
+        let (a, b) = clip.origin.unwrap_or((0.0, duration));
+        clip.src_in = a;
+        clip.src_out = b;
+        clip.stretch = 1.0;
+        clip.pitch = 0.0;
+        clip.gain_db = 0.0;
+        clip.pan = 0.0;
+        clip.reversed = false;
+        clip.muted = false;
+        clip.mode = ClipMode::Elastic;
+        clip.fade_in = SPLICE_FADE.min(clip.length());
+        clip.fade_out = SPLICE_FADE.min(clip.length() - clip.fade_in);
+        clip.fade_in_auto = false;
+        clip.fade_out_auto = false;
+    }
+
+    // ----- Groups -----
+
+    /// Makes clips move and select as one.
+    pub fn group_clips(&mut self, ids: &[ClipId], word_name: Option<String>) -> GroupId {
+        let group = GroupId(self.alloc_id());
+        for id in ids {
+            if let Some(c) = self.clip_mut(*id) {
+                c.group = Some(group);
+                c.word_name = word_name.clone();
+            }
+        }
+        group
+    }
+
+    pub fn ungroup_clips(&mut self, ids: &[ClipId]) {
+        let members: Vec<ClipId> = ids.iter().flat_map(|id| self.group_members(*id)).collect();
+        for id in members {
+            if let Some(c) = self.clip_mut(id) {
+                c.group = None;
+                c.word_name = None;
+                c.made_word = None;
+            }
+        }
+    }
+
+    /// Every clip in a clip's group, or just the clip if it isn't in one. In time order.
+    pub fn group_members(&self, id: ClipId) -> Vec<ClipId> {
+        let Some(clip) = self.clip(id) else { return Vec::new() };
+        let Some(group) = clip.group else { return vec![id] };
+        let mut members: Vec<&Clip> = self.tracks.iter().flat_map(|t| &t.clips).filter(|c| c.group == Some(group)).collect();
+        members.sort_by(|a, b| a.start.total_cmp(&b.start));
+        members.iter().map(|c| c.id).collect()
+    }
+
+    /// Copies clips `offset` later. Copied groups stay together, as new groups of their own.
+    pub fn duplicate_clips(&mut self, ids: &[ClipId], offset: Seconds) -> Vec<ClipId> {
+        let mut new_groups: HashMap<GroupId, GroupId> = HashMap::new();
+        let mut copies = Vec::new();
+        for id in ids {
+            let Some(mut clip) = self.clip(*id).cloned() else { continue };
+            let Some(track) = self.track_of_clip(*id) else { continue };
+            let new_id = ClipId(self.alloc_id());
+            clip.id = new_id;
+            clip.start = (clip.start + offset).max(0.0);
+            if let Some(group) = clip.group {
+                let copy_group = match new_groups.get(&group) {
+                    Some(g) => *g,
+                    None => {
+                        let g = GroupId(self.alloc_id());
+                        new_groups.insert(group, g);
+                        g
+                    }
+                };
+                clip.group = Some(copy_group);
+            }
+            if let Some(t) = self.track_mut(track) {
+                t.clips.push(clip);
+            }
+            copies.push(new_id);
+        }
+        copies
+    }
+
+    // ----- Crossfades -----
+
+    /// Overlaps clips in time order by `overlap`, and crossfades them. Clips after them stay put.
+    pub fn crossfade_clips(&mut self, ids: &[ClipId], overlap: Seconds) {
+        let mut order: Vec<ClipId> = ids.to_vec();
+        order.sort_by(|a, b| {
+            let (a, b) = (self.clip(*a).map_or(0.0, |c| c.start), self.clip(*b).map_or(0.0, |c| c.start));
+            a.total_cmp(&b)
+        });
+        let mut previous_end = None;
+        for id in order {
+            let Some(c) = self.clip_mut(id) else { continue };
+            if let Some(end) = previous_end {
+                let end: Seconds = end;
+                c.start = (end - overlap.min(c.length() * 0.5)).max(0.0);
+            }
+            previous_end = Some(c.end());
+        }
+        self.update_auto_crossfades();
+    }
+
+    /// Overlapping clips on a track fade across each other, for as long as they overlap. When they
+    /// part, the automatic fades go back to the short anti-click ones.
+    pub fn update_auto_crossfades(&mut self) {
+        for track in &mut self.tracks {
+            track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+            let mut fades_in = vec![None; track.clips.len()];
+            let mut fades_out = vec![None; track.clips.len()];
+            for i in 0..track.clips.len() {
+                for j in i + 1..track.clips.len() {
+                    let (a, b) = (&track.clips[i], &track.clips[j]);
+                    if b.start >= a.end() {
+                        break;
+                    }
+                    // One clip inside another, such as a word over a whole stem, isn't a crossfade.
+                    if b.end() > a.end() && b.start > a.start {
+                        let overlap = a.end() - b.start;
+                        fades_out[i] = Some(overlap);
+                        fades_in[j] = Some(overlap);
+                    }
+                }
+            }
+            for (i, clip) in track.clips.iter_mut().enumerate() {
+                match fades_in[i] {
+                    Some(f) => {
+                        clip.fade_in = f;
+                        clip.fade_in_auto = true;
+                    }
+                    None if clip.fade_in_auto => {
+                        clip.fade_in = SPLICE_FADE.min(clip.length());
+                        clip.fade_in_auto = false;
+                    }
+                    None => {}
+                }
+                match fades_out[i] {
+                    Some(f) => {
+                        clip.fade_out = f;
+                        clip.fade_out_auto = true;
+                    }
+                    None if clip.fade_out_auto => {
+                        clip.fade_out = SPLICE_FADE.min(clip.length());
+                        clip.fade_out_auto = false;
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    // ----- Made words -----
+
+    pub fn word(&self, id: WordId) -> Option<&MadeWord> {
+        self.words.iter().find(|w| w.id == id)
+    }
+
+    pub fn word_named(&self, name: &str) -> Option<&MadeWord> {
+        self.words.iter().find(|w| w.name.eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// Saves clips as a word that can be found and used again. Using an existing name updates it.
+    /// The clips become a group that's linked to the word.
+    pub fn save_word(&mut self, name: &str, ids: &[ClipId]) -> Option<WordId> {
+        let mut parts: Vec<Clip> = ids.iter().filter_map(|id| self.clip(*id).cloned()).collect();
+        let earliest = parts.iter().map(|c| c.start).reduce(f64::min)?;
+        parts.sort_by(|a, b| a.start.total_cmp(&b.start));
+        for part in &mut parts {
+            part.start -= earliest;
+            part.group = None;
+            part.made_word = None;
+            part.word_name = None;
+        }
+        let name = name.trim().to_string();
+        let id = match self.word_named(&name).map(|w| w.id) {
+            Some(existing) => existing,
+            None => {
+                let id = WordId(self.alloc_id());
+                self.words.push(MadeWord { id, name: name.clone(), parts: Vec::new() });
+                id
+            }
+        };
+        if let Some(word) = self.words.iter_mut().find(|w| w.id == id) {
+            word.parts = parts;
+        }
+        self.group_clips(ids, Some(name));
+        for clip in ids {
+            if let Some(c) = self.clip_mut(*clip) {
+                c.made_word = Some(id);
+            }
+        }
+        Some(id)
+    }
+
+    /// Puts copies of a saved word's clips on a track, as a group.
+    pub fn place_word(&mut self, id: WordId, track: TrackId, at: Seconds) -> Vec<ClipId> {
+        let Some(word) = self.word(id).cloned() else { return Vec::new() };
+        let group = GroupId(self.alloc_id());
+        let mut placed = Vec::new();
+        for mut part in word.parts {
+            let new_id = ClipId(self.alloc_id());
+            part.id = new_id;
+            part.start += at;
+            part.group = Some(group);
+            part.made_word = Some(id);
+            part.word_name = Some(word.name.clone());
+            if let Some(t) = self.track_mut(track) {
+                t.clips.push(part);
+                placed.push(new_id);
+            }
+        }
+        placed
+    }
+
+    /// Replaces a placed copy of a saved word with a fresh one, in the same place.
+    pub fn revert_to_saved(&mut self, clip: ClipId) -> Vec<ClipId> {
+        let Some(word) = self.clip(clip).and_then(|c| c.made_word) else { return Vec::new() };
+        let Some(track) = self.track_of_clip(clip) else { return Vec::new() };
+        let members = self.group_members(clip);
+        let start = members.iter().filter_map(|m| self.clip(*m)).map(|c| c.start).fold(f64::MAX, f64::min);
+        for member in members {
+            self.remove_clip(member);
+        }
+        self.place_word(word, track, start)
+    }
+
     /// Changes the stretch ratio, anchored at the clip start.
     pub fn set_stretch(&mut self, id: ClipId, stretch: f64) {
         if let Some(clip) = self.clip_mut(id) {
@@ -210,6 +451,7 @@ impl Project {
             part.fade_in = SPLICE_FADE;
             part.fade_out = SPLICE_FADE;
             part.label = Some(label.clone());
+            part.origin = Some((a, b));
             if let Some(t) = self.track_mut(track) {
                 t.clips.push(part);
             }
@@ -231,14 +473,21 @@ impl Project {
         ((t - self.grid_offset) / step).round() * step + self.grid_offset
     }
 
-    /// Snaps clip starts to the grid.
+    /// Snaps clip starts to the grid. A group moves as one, by its first clip, so a made word stays intact.
     pub fn quantize(&mut self, ids: &[ClipId], division: f64) {
+        let mut done: HashSet<ClipId> = HashSet::new();
         for id in ids {
-            if let Some(start) = self.clip(*id).map(|c| c.start) {
-                let snapped = self.snap_to_grid(start, division).max(0.0);
-                if let Some(c) = self.clip_mut(*id) {
-                    c.start = snapped;
+            if done.contains(id) {
+                continue;
+            }
+            let members = self.group_members(*id);
+            let Some(start) = members.iter().filter_map(|m| self.clip(*m)).map(|c| c.start).reduce(f64::min) else { continue };
+            let delta = self.snap_to_grid(start, division).max(0.0) - start;
+            for member in members {
+                if let Some(c) = self.clip_mut(member) {
+                    c.start += delta;
                 }
+                done.insert(member);
             }
         }
     }
@@ -395,6 +644,139 @@ mod tests {
         p.set_stretch(c, 0.1);
         p.trim_end(c, 100.0);
         assert!(p.clip(c).is_some());
+    }
+
+    #[test]
+    fn swapping_a_take_keeps_position_and_edits() {
+        let (mut p, _, s, c) = project();
+        p.clip_mut(c).unwrap().pitch = 3.0;
+        p.clip_mut(c).unwrap().reversed = true;
+        p.swap_clip_audio(c, s, 5.0, 5.5);
+        let clip = p.clip(c).unwrap();
+        assert_eq!((clip.start, clip.src_in, clip.src_out, clip.pitch, clip.reversed), (10.0, 5.0, 5.5, 3.0, true));
+    }
+
+    fn pieces(p: &mut Project) -> (TrackId, ClipId, ClipId) {
+        let t = p.add_track("Sentence", TrackKind::Vocal);
+        let s = p.sources[0].id;
+        let a = p.add_slice(t, s, 5.0, 1.0, 1.5, Some("z iy".into())).unwrap();
+        let b = p.add_slice(t, s, 5.5, 3.0, 3.5, Some("b r".into())).unwrap();
+        (t, a, b)
+    }
+
+    #[test]
+    fn overlapping_clips_crossfade_and_stop_when_they_part() {
+        let (mut p, _, _, _) = project();
+        let (_, a, b) = pieces(&mut p);
+        p.clip_mut(b).unwrap().start = 5.4;
+        p.update_auto_crossfades();
+        assert!((p.clip(a).unwrap().fade_out - 0.1).abs() < 1e-9);
+        assert!((p.clip(b).unwrap().fade_in - 0.1).abs() < 1e-9);
+        p.clip_mut(b).unwrap().start = 7.0;
+        p.update_auto_crossfades();
+        assert_eq!(p.clip(a).unwrap().fade_out, SPLICE_FADE);
+        assert_eq!(p.clip(b).unwrap().fade_in, SPLICE_FADE);
+    }
+
+    #[test]
+    fn a_word_over_a_whole_stem_is_not_a_crossfade() {
+        let (mut p, t, s, stem) = project(); // the stem runs 10..20
+        let word = p.add_slice(t, s, 12.0, 1.0, 1.5, None).unwrap();
+        p.update_auto_crossfades();
+        assert_eq!(p.clip(stem).unwrap().fade_out, 0.0);
+        assert_eq!(p.clip(word).unwrap().fade_in, SPLICE_FADE);
+    }
+
+    #[test]
+    fn crossfading_overlaps_clips_in_order() {
+        let (mut p, _, _, _) = project();
+        let (_, a, b) = pieces(&mut p);
+        p.crossfade_clips(&[b, a], 0.02);
+        assert!((p.clip(b).unwrap().start - 5.48).abs() < 1e-9);
+        assert!((p.clip(a).unwrap().fade_out - 0.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn saved_words_are_copies_that_outlive_their_clips() {
+        let (mut p, _, _, _) = project();
+        let (t, a, b) = pieces(&mut p);
+        let word = p.save_word("zebra", &[a, b]).unwrap();
+        assert_eq!(p.word(word).unwrap().parts[0].start, 0.0);
+        assert_eq!(p.group_members(a).len(), 2);
+        p.remove_clip(a);
+        p.remove_clip(b);
+        let placed = p.place_word(word, t, 30.0);
+        assert_eq!(placed.len(), 2);
+        assert_eq!(p.clip(placed[1]).unwrap().start, 30.5);
+        // Editing a placed copy leaves the saved word alone, and reverting gets it back.
+        p.clip_mut(placed[1]).unwrap().start = 40.0;
+        p.clip_mut(placed[1]).unwrap().pitch = 5.0;
+        assert_eq!(p.word(word).unwrap().parts[1].pitch, 0.0);
+        let fresh = p.revert_to_saved(placed[0]);
+        assert_eq!(p.clip(fresh[1]).unwrap().start, 30.5);
+        assert_eq!(p.clip(fresh[1]).unwrap().pitch, 0.0);
+    }
+
+    #[test]
+    fn saving_under_the_same_name_updates_the_word() {
+        let (mut p, _, _, _) = project();
+        let (_, a, b) = pieces(&mut p);
+        let first = p.save_word("zebra", &[a]).unwrap();
+        let second = p.save_word("Zebra", &[a, b]).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(p.words.len(), 1);
+        assert_eq!(p.word(first).unwrap().parts.len(), 2);
+    }
+
+    #[test]
+    fn restore_undoes_everything_but_position() {
+        let (mut p, _, _, _) = project();
+        let (_, a, _) = pieces(&mut p);
+        p.trim_end(a, 5.2);
+        p.set_stretch(a, 2.0);
+        let clip = p.clip_mut(a).unwrap();
+        clip.pitch = 7.0;
+        clip.reversed = true;
+        clip.start = 8.0;
+        p.restore_original(a);
+        let clip = p.clip(a).unwrap();
+        assert_eq!((clip.src_in, clip.src_out, clip.stretch, clip.pitch, clip.reversed, clip.start), (1.0, 1.5, 1.0, 0.0, false, 8.0));
+    }
+
+    #[test]
+    fn quantizing_a_group_keeps_it_together() {
+        let (mut p, _, _, _) = project();
+        let (_, a, b) = pieces(&mut p);
+        p.group_clips(&[a, b], None);
+        p.clip_mut(a).unwrap().start = 5.1;
+        p.clip_mut(b).unwrap().start = 5.6;
+        p.quantize(&[a, b], 1.0); // 120 BPM, so beats every 0.5 s
+        assert_eq!(p.clip(a).unwrap().start, 5.0);
+        assert!((p.clip(b).unwrap().start - 5.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn duplicated_groups_stay_separate_from_the_original() {
+        let (mut p, _, _, _) = project();
+        let (_, a, b) = pieces(&mut p);
+        p.group_clips(&[a, b], None);
+        let copies = p.duplicate_clips(&[a, b], 10.0);
+        assert_eq!(p.group_members(copies[0]).len(), 2);
+        assert_ne!(p.clip(copies[0]).unwrap().group, p.clip(a).unwrap().group);
+    }
+
+    #[test]
+    fn old_projects_without_these_fields_still_load() {
+        let (p, _, _, _) = project();
+        let mut json: serde_json::Value = serde_json::from_str(&p.to_json().unwrap()).unwrap();
+        json.as_object_mut().unwrap().remove("words");
+        for clip in json["tracks"][0]["clips"].as_array_mut().unwrap() {
+            let clip = clip.as_object_mut().unwrap();
+            for field in ["group", "word_name", "made_word", "origin", "fade_in_auto", "fade_out_auto"] {
+                clip.remove(field);
+            }
+        }
+        assert!(Project::from_json(&json.to_string()).is_ok());
     }
 
     #[test]

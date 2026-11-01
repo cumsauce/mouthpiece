@@ -5,6 +5,7 @@
 
 mod edit;
 mod history;
+pub mod video;
 
 pub use history::History;
 
@@ -22,7 +23,7 @@ macro_rules! id_type {
         pub struct $name(pub u64);
     )*};
 }
-id_type!(SourceId, TrackId, ClipId, DeviceId);
+id_type!(SourceId, TrackId, ClipId, DeviceId, GroupId, WordId);
 
 /// Minimum clip length on the arrangement, so a clip can always be seen and grabbed.
 pub const MIN_CLIP_LEN: Seconds = 0.005;
@@ -40,6 +41,9 @@ pub struct Project {
     pub master: Master,
     pub loop_region: LoopRegion,
     pub metronome: bool,
+    /// Words made by hand, kept so they can be used again. See `MadeWord`.
+    #[serde(default)]
+    pub words: Vec<MadeWord>,
     next_id: u64,
 }
 
@@ -87,6 +91,9 @@ pub struct Source {
     pub duration: Seconds,
     pub bpm: Option<f64>,
     pub kind: TrackKind,
+    /// Whether this file also has a picture.
+    #[serde(default)]
+    pub has_video: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +186,23 @@ pub struct Clip {
     pub muted: bool,
     /// The word or phoneme this clip was cut from, shown on the clip.
     pub label: Option<String>,
+    /// Clips in a group select and move as one, such as the pieces of a word made by hand.
+    #[serde(default)]
+    pub group: Option<GroupId>,
+    /// The word that this clip's group spells, if it has a name.
+    #[serde(default)]
+    pub word_name: Option<String>,
+    /// The saved word this was placed from, which "Revert to saved" goes back to.
+    #[serde(default)]
+    pub made_word: Option<WordId>,
+    /// The source range as first placed, which "Restore original" goes back to.
+    #[serde(default)]
+    pub origin: Option<(Seconds, Seconds)>,
+    /// Whether a fade was made automatically by overlapping clips, so it can go when they part.
+    #[serde(default)]
+    pub fade_in_auto: bool,
+    #[serde(default)]
+    pub fade_out_auto: bool,
 }
 
 impl Clip {
@@ -200,6 +224,12 @@ impl Clip {
             preserve_formants: true,
             muted: false,
             label: None,
+            group: None,
+            word_name: None,
+            made_word: None,
+            origin: None,
+            fade_in_auto: false,
+            fade_out_auto: false,
         }
     }
 
@@ -238,6 +268,22 @@ impl Clip {
     pub fn time_of_source(&self, s: Seconds) -> Seconds {
         let d = if self.reversed { self.src_out - s } else { s - self.src_in };
         self.start + d * self.stretch
+    }
+}
+
+/// A word made by hand from pieces of others. Placing one puts copies of its clips on the timeline, so
+/// changing those never changes this, and this never changes the recordings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MadeWord {
+    pub id: WordId,
+    pub name: String,
+    /// The pieces, with `start` measured from the beginning of the word.
+    pub parts: Vec<Clip>,
+}
+
+impl MadeWord {
+    pub fn length(&self) -> Seconds {
+        self.parts.iter().map(Clip::end).fold(0.0, f64::max)
     }
 }
 
@@ -307,6 +353,7 @@ impl Default for Project {
             master: Master { gain_db: 0.0, devices: Vec::new() },
             loop_region: LoopRegion { start: 0.0, end: 8.0, enabled: false },
             metronome: false,
+            words: Vec::new(),
             next_id: 1,
         };
         let id = DeviceId(p.alloc_id());

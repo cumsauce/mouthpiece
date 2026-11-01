@@ -9,7 +9,7 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
-pub const SUPPORTED_EXTENSIONS: &[&str] = &["wav", "mp3", "flac", "aiff", "aif", "aifc", "ogg", "oga", "opus", "m4a", "aac", "mp4", "caf", "mkv"];
+pub const SUPPORTED_EXTENSIONS: &[&str] = &["wav", "mp3", "flac", "aiff", "aif", "aifc", "ogg", "oga", "opus", "m4a", "aac", "caf", "mp4", "mov", "m4v", "mkv", "webm", "avi"];
 
 pub fn is_supported(path: &Path) -> bool {
     path.extension()
@@ -18,6 +18,12 @@ pub fn is_supported(path: &Path) -> bool {
 }
 
 pub fn decode_file(path: &Path, target_rate: u32) -> Result<Stereo, String> {
+    // ffmpeg reads the sound in more video formats. Without it, the built-in decoders still try.
+    if crate::video::is_video_path(path) {
+        if let Ok(audio) = crate::video::extract_audio(path, target_rate) {
+            return Ok(audio);
+        }
+    }
     let file = std::fs::File::open(path).map_err(|e| format!("cannot open file: {e}"))?;
     let stream = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();

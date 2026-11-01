@@ -46,27 +46,54 @@ makes the same packages that CI does, in `dist/`.
 ## The workflow
 
 1. **Drop your stems in.** Tracks are named, coloured and ordered by type. BPM, beat grid and key are detected.
-2. **Vocals transcribe themselves.** On first use, the Words panel offers a speech model to download.
+2. **Vocals transcribe themselves.** The first time, the Say panel offers a speech model to download.
    *Base* suits speech. *Large Turbo* is the one to pick for singing.
-3. **Find words** with `⌘F`. Press Return to place a word at the playhead and move on to the next one.
-4. **Or type a whole sentence** with `⌘B`. The Sentence Builder prefers runs of words as originally
-   said, lets you cycle takes, and stitches words nobody said from phonemes.
-5. **Shape it:** split, reverse, stretch, repitch, fade, and snap words into the song's key.
+3. **Type what they should say,** then press Return. Space plays it back with the music, and you can
+   carry on typing the next line.
+4. **Try other takes** with `T`, right on the timeline. Each word stays where it is.
+5. **Shape it:** split, reverse, stretch, repitch, stutter, and tune words to the song's key. The bar that
+   appears over a selection has the common ones.
 6. **Render** with `⌘R`, to MP3 or WAV.
 
-| Search for | To find |
+| Type | To get |
 |---|---|
-| `hello` | Every take, then sound-alikes, then near matches |
-| `hello world` | A phrase, as it was said |
+| `hello` | Every take of a word |
+| `hello world` | A whole line, using runs of words as they were said, and stitching ones nobody said from sounds |
 | `/k ae t/` | A sound anywhere, even inside other words |
 | `~cat` | Words that rhyme |
 
+Press `/` to start typing from anywhere. In the input, Tab moves between words, ↑ and ↓ choose takes,
+and Shift+Return previews the line. The Transcript tab shows the lyrics: click a word to hear it, or double-click
+to add it to your line.
+
+### Making words that don't exist
+
+Type a word that was never said and it's stitched from sounds, as a group of clips that are already blended. Click
+a piece of the group to adjust it, or drag a clip's name strip in the editor. Overlapping clips crossfade for as
+long as they overlap, and `X` blends any selection. When it sounds right, press `⇧W` to name it. After that, typing
+its name uses it, and it's listed under My words.
+
+Nothing you do changes your recordings, and editing a placed copy doesn't change the saved word. Revert to saved
+and Restore original (`⇧R`) go back from any experiment.
+
+### Video
+
+Drop in a video instead of a stem and work as usual. Each clip shows its own part of the picture, so a sentence mix
+cuts the video by itself, and the preview follows the playhead and takes you audition. Render it as MP4. Video needs
+[ffmpeg](https://ffmpeg.org) on your system (`brew install ffmpeg`). Sound works without it.
+
+### Everything else
+
 `⌘K` lists every command, and `?` shows every shortcut. Double-click a track or clip to open it in the
-detail editor. Drag clip edges to trim, Alt-drag edges to stretch, and Alt-drag a clip to copy it.
+editor. Drag clip edges to trim, Alt-drag edges to stretch, and Alt-drag a clip to copy it.
 
 ## Design
 
-The full design is in [PLAN.md](PLAN.md). In short:
+- [docs/WORKFLOWS.md](docs/WORKFLOWS.md): what the app is for, and the jobs it has to do well.
+- [docs/DESIGN.md](docs/DESIGN.md): the design system, its rules, and how to build with it.
+- [PLAN.md](PLAN.md): the original architecture.
+
+The code is organised like this:
 
 - `mp-model`: the project document and edits. No audio, no UI.
 - `mp-dsp`: filters, dynamics, reverb, resampling, stretching, pitch detection.

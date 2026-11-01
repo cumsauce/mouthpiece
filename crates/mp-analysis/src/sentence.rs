@@ -3,7 +3,7 @@
 //! It prefers runs of consecutive words from the original recording because they keep their natural
 //! flow, then single takes, then stitches words nobody ever said out of phonemes.
 
-use crate::search::{Hit, WordIndex};
+use crate::search::{Hit, HitKind, WordIndex};
 use crate::{g2p, normalize_word};
 
 /// How a part of the sentence will be sourced.
@@ -25,11 +25,18 @@ pub struct SentencePart {
     pub options: Vec<Hit>,
     /// Which take is chosen, for `PartSource::Takes`.
     pub selected: usize,
+    /// A word the user made with this name, whose id the caller fills in. It's preferred over takes
+    /// and stitching, because someone who made a word has already said what it should sound like.
+    pub made: Option<u64>,
+    pub use_made: bool,
 }
 
 impl SentencePart {
     /// Audio pieces to place on the timeline, in order.
     pub fn pieces(&self) -> Vec<&Hit> {
+        if self.use_made {
+            return Vec::new();
+        }
         match self.source {
             PartSource::Takes => self.options.get(self.selected).into_iter().collect(),
             PartSource::Stitched => self.options.iter().collect(),
@@ -48,10 +55,10 @@ pub fn plan(text: &str, index: &WordIndex) -> Vec<SentencePart> {
         let mut matched = false;
         for len in (2..=(words.len() - i).min(6)).rev() {
             let phrase = words[i..i + len].join(" ");
-            let mut hits = index.find_phrase(&phrase);
+            let mut hits = index.find_connected_phrase(&phrase);
             if !hits.is_empty() {
                 hits.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
-                parts.push(SentencePart { text: phrase, source: PartSource::Takes, options: hits, selected: 0 });
+                parts.push(SentencePart { text: phrase, source: PartSource::Takes, options: hits, selected: 0, made: None, use_made: false });
                 i += len;
                 matched = true;
                 break;
@@ -63,15 +70,39 @@ pub fn plan(text: &str, index: &WordIndex) -> Vec<SentencePart> {
         let word = &words[i];
         let takes = index.takes_of(word);
         if !takes.is_empty() {
-            parts.push(SentencePart { text: word.clone(), source: PartSource::Takes, options: takes, selected: 0 });
+            parts.push(SentencePart { text: word.clone(), source: PartSource::Takes, options: takes, selected: 0, made: None, use_made: false });
         } else {
             let pieces = stitch(word, index);
             let source = if pieces.is_empty() { PartSource::Missing } else { PartSource::Stitched };
-            parts.push(SentencePart { text: word.clone(), source, options: pieces, selected: 0 });
+            parts.push(SentencePart { text: word.clone(), source, options: pieces, selected: 0, made: None, use_made: false });
         }
         i += 1;
     }
+    choose_takes(&mut parts);
     parts
+}
+
+/// A first guess at takes: each word close in pitch to the one before, so a line sounds less stitched.
+/// It trades off with confidence, and a true match always wins over a word that only sounds the same.
+fn choose_takes(parts: &mut [SentencePart]) {
+    let mut previous: Option<f32> = None;
+    for part in parts.iter_mut() {
+        if part.source == PartSource::Takes && part.options.len() > 1 {
+            let exact = part.options.iter().any(|h| h.kind != HitKind::Homophone);
+            let cost = |h: &Hit| {
+                let leap = match (previous, h.pitch_hz) {
+                    (Some(a), Some(b)) => (12.0 * (b / a).log2()).abs() / 12.0,
+                    _ => 0.0,
+                };
+                let wrong_word = if exact && h.kind == HitKind::Homophone { 10.0 } else { 0.0 };
+                leap + (1.0 - h.confidence) + wrong_word
+            };
+            part.selected = (0..part.options.len()).min_by(|a, b| cost(&part.options[*a]).total_cmp(&cost(&part.options[*b]))).unwrap_or(0);
+        }
+        if let Some(pitch) = part.pieces().last().and_then(|h| h.pitch_hz) {
+            previous = Some(pitch);
+        }
+    }
 }
 
 /// Builds a word out of the longest phoneme runs available. Returns empty if any sound is missing.
@@ -98,16 +129,33 @@ pub fn stitch(word: &str, index: &WordIndex) -> Vec<Hit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::tests::index;
+    use crate::search::tests::{index, word};
+    use crate::Transcript;
+
+    /// Words with no gaps between them, as in connected speech.
+    fn connected_index(text: &str) -> WordIndex {
+        let words = text.split_whitespace().enumerate().map(|(i, w)| word(w, i as f64 * 0.3, 0.9)).collect();
+        let mut idx = WordIndex::default();
+        idx.set_transcript(1, Transcript { words, model: "test".into() });
+        idx
+    }
 
     #[test]
     fn prefers_whole_phrases_over_single_words() {
-        let idx = index("never gonna give you up you know");
+        let idx = connected_index("never gonna give you up you know");
         let parts = plan("gonna give you know", &idx);
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].text, "gonna give you");
         assert_eq!(parts[1].text, "know");
         assert_eq!(parts[0].source, PartSource::Takes);
+    }
+
+    #[test]
+    fn phrases_do_not_span_a_pause() {
+        // In the test index, words are 0.3 s long and start 1 s apart, so each pair has a long gap.
+        let idx = index("never gonna");
+        let parts = plan("never gonna", &idx);
+        assert_eq!(parts.len(), 2, "{parts:?}");
     }
 
     #[test]
@@ -135,6 +183,24 @@ mod tests {
         let parts = plan("zebra", &idx);
         assert_eq!(parts[0].source, PartSource::Missing);
         assert!(parts[0].pieces().is_empty());
+    }
+
+    #[test]
+    fn takes_stay_close_in_pitch_to_the_word_before() {
+        let mut words = vec![
+            word("hello", 0.0, 0.9),
+            word("and", 0.5, 0.9), // keeps "hello world" from being a phrase
+            word("world", 1.0, 0.9),
+            word("world", 2.0, 0.9),
+        ];
+        words[0].pitch_hz = Some(220.0);
+        words[2].pitch_hz = Some(440.0); // an octave away from "hello"
+        words[3].pitch_hz = Some(233.0); // a semitone away
+        let mut idx = WordIndex::default();
+        idx.set_transcript(1, Transcript { words, model: "t".into() });
+        let parts = plan("hello world", &idx);
+        let world = parts.iter().find(|p| p.text == "world").unwrap();
+        assert_eq!(world.pieces()[0].start, 2.0);
     }
 
     #[test]

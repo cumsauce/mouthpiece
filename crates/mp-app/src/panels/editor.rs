@@ -1,11 +1,11 @@
 //! The detail editor: one track's clips up close, with its words, phonemes and spectrogram.
 
 use crate::app::{App, BottomTab, SpectrogramState};
-use crate::lane::{clip_rect, hit_zone, paint_playhead, paint_snap_line, PaintOptions, Zone};
-use crate::theme::*;
-use crate::timeline::{draw_grid, draw_ruler, TimeView};
-use crate::widgets;
-use eframe::egui::{self, Align2, Color32, CornerRadius, CursorIcon, Rect, Sense, Stroke, StrokeKind, Ui};
+use crate::panels::arranger::truncate;
+use crate::panels::lane::{clip_rect, hit_zone, paint_playhead, paint_snap_line, PaintOptions, Zone};
+use crate::ds::*;
+use crate::panels::timeline::{draw_grid, draw_ruler, TimeView};
+use eframe::egui::{self, Align2, Color32, CursorIcon, Rect, Sense, Stroke, StrokeKind, Ui};
 use mp_analysis::search::{Hit, HitKind};
 use mp_model::{Clip, SourceId, Track, TrackId};
 
@@ -56,25 +56,18 @@ struct Chip {
 
 impl App {
     pub fn bottom_panel(&mut self, ui: &mut Ui) {
-        let bar = ui.horizontal(|ui| {
-            ui.add_space(4.0);
-            for (name, tab) in [("Detail Editor", BottomTab::Editor), ("Devices", BottomTab::Devices), ("Mixer", BottomTab::Mixer)] {
-                if widgets::tab(ui, name, self.bottom_tab == tab) {
-                    self.bottom_tab = tab;
-                }
-            }
-            ui.add_space(12.0);
+        ui.add_space(SP_1);
+        ui.horizontal(|ui| {
+            ui.add_space(SP_2);
+            tabs(ui, &mut self.bottom_tab, &[(BottomTab::Editor, "Editor"), (BottomTab::Devices, "Devices"), (BottomTab::Mixer, "Mixer")]);
+            ui.add_space(SP_3);
             match self.bottom_tab {
                 BottomTab::Editor => self.editor_toolbar(ui),
                 BottomTab::Devices => self.devices_toolbar(ui),
                 BottomTab::Mixer => {}
             }
         });
-        ui.painter().line_segment(
-            [egui::pos2(ui.max_rect().left(), bar.response.rect.bottom() + 2.0), egui::pos2(ui.max_rect().right(), bar.response.rect.bottom() + 2.0)],
-            Stroke::new(1.0, LINE),
-        );
-        ui.add_space(3.0);
+        ui.add_space(SP_1);
         match self.bottom_tab {
             BottomTab::Editor => self.detail_editor(ui),
             BottomTab::Devices => self.devices_panel(ui),
@@ -84,43 +77,40 @@ impl App {
 
     fn editor_toolbar(&mut self, ui: &mut Ui) {
         let Some(track) = self.selected_track.and_then(|t| self.project.track(t)) else { return };
-        let color = track_color(track.color);
-        ui.label(egui::RichText::new(&track.name).color(color).strong());
+        ui.label(strong(truncate(&track.name, 22)).color(track_color(track.color)));
         let first_source = track.clips.first().map(|c| c.source);
         let transcribed = first_source.is_some_and(|s| self.index.transcript(s.0).is_some());
-        ui.add_space(8.0);
-        for (label, flag) in [("Spectrogram", 0), ("Words", 1), ("Phonemes", 2)] {
-            let on = match flag {
-                0 => self.editor.show_spectrogram,
-                1 => self.editor.show_words,
-                _ => self.editor.show_phonemes,
-            };
-            if ui.selectable_label(on, label).clicked() {
-                match flag {
-                    0 => self.editor.show_spectrogram = !on,
-                    1 => self.editor.show_words = !on,
-                    _ => self.editor.show_phonemes = !on,
-                }
-            }
+        ui.add_space(SP_2);
+        ui.spacing_mut().item_spacing.x = SP_HALF;
+        if ui.add(Button::ghost("Spectrogram").small().active(self.editor.show_spectrogram)).clicked() {
+            self.editor.show_spectrogram = !self.editor.show_spectrogram;
         }
-        ui.add_space(8.0);
-        if ui.button("Fit").on_hover_text("Fit this track in the editor").clicked() {
+        if ui.add(Button::ghost("Words").small().active(self.editor.show_words)).clicked() {
+            self.editor.show_words = !self.editor.show_words;
+        }
+        if ui.add(Button::ghost("Phonemes").small().active(self.editor.show_phonemes)).clicked() {
+            self.editor.show_phonemes = !self.editor.show_phonemes;
+        }
+        ui.add_space(SP_2);
+        if ui.add(Button::ghost("Fit").small().tip("Fit this track in the editor", None)).clicked() {
             self.editor.needs_fit = true;
         }
         if transcribed {
-            if ui.button("Slice to words").on_hover_text("Turn the selected clip, or the whole track, into one clip per word (W)").clicked() {
+            if ui.add(Button::ghost("Slice to words").small().tip("One clip per word", Some("W"))).clicked() {
                 self.slice_selection_to_words();
             }
-        } else if first_source.is_some() && ui.button("Transcribe").on_hover_text(widgets::keys("Find the words in this track (⇧⌘T)")).clicked() {
+        } else if first_source.is_some() && ui.add(Button::ghost("Transcribe").small().tip("Find the words in this track", Some("⇧⌘T"))).clicked() {
             self.run(crate::actions::Action::Transcribe);
         }
         if let Some((a, b)) = self.editor.range {
-            ui.add_space(8.0);
-            ui.label(egui::RichText::new(format!("{:.3} s selected", b - a)).color(ACCENT).size(11.5));
-            if ui.button("Play").clicked() {
+            ui.add_space(SP_2);
+            ui.label(num(format!("{:.3}s", b - a)));
+            ui.add_space(SP_1);
+            if ui.add(Button::secondary("Hear").small()).clicked() {
                 self.audition_editor_range();
             }
-            if ui.button("Place on Sentence").on_hover_text("Copy this selection to the Sentence track at the playhead (E)").clicked() {
+            ui.add_space(SP_1);
+            if ui.add(Button::secondary("Place on Sentence").small().tip("Copy this to the Sentence track at the playhead", Some("E"))).clicked() {
                 self.place_editor_range();
             }
         }
@@ -170,13 +160,7 @@ impl App {
         self.editor.view.left = area.left();
         self.editor.view.width = area.width();
         let Some(track) = self.selected_track.and_then(|t| self.project.track(t)).cloned() else {
-            ui.painter().text(
-                area.center(),
-                Align2::CENTER_CENTER,
-                "Double-click a track or clip to edit it here",
-                ui_font(14.0),
-                TEXT_FAINT,
-            );
+            empty_state(ui, area, "Nothing open", "Double-click a clip or track to edit it here.", None);
             return;
         };
         for clip in &track.clips {
@@ -248,7 +232,7 @@ impl App {
         }
 
         let view = self.editor.view;
-        ui.painter().rect_filled(stack, 0.0, BG_0);
+        ui.painter().rect_filled(stack, 0.0, BASE);
         draw_grid(&ui.painter_at(wave), wave, &self.project, &view);
         draw_ruler(ui.painter(), ruler, &self.project, &view);
         let ruler_response = ui.interact(ruler, ui.scope_id().with("ed-ruler"), Sense::click_and_drag());
@@ -291,7 +275,7 @@ impl App {
         if let Some((_, zone)) = pointer.and_then(|p| zone_at(p, alt)) {
             if zone == Zone::Body {
                 ui.ctx().set_cursor_icon(CursorIcon::Text);
-                self.hint = "Drag to select audio. E places it on the Sentence track. Click to move the playhead.".to_string();
+                self.hint = "Drag to select audio. Drag a clip's name strip to move it. Click to move the playhead.".to_string();
             } else {
                 ui.ctx().set_cursor_icon(zone.cursor());
                 self.hint = zone.hint().to_string();
@@ -303,6 +287,12 @@ impl App {
                     Some((clip, zone)) if zone != Zone::Body => {
                         let track_index = self.project.tracks.iter().position(|t| t.id == track.id).unwrap_or(0);
                         self.begin_clip_drag(clip, zone, view.t(origin.x), track_index, false);
+                    }
+                    // A clip's name strip moves that one piece, which is how a made word gets adjusted.
+                    Some((clip, _)) if origin.y < rect.top() + crate::panels::lane::HEADER_H => {
+                        let track_index = self.project.tracks.iter().position(|t| t.id == track.id).unwrap_or(0);
+                        self.selection = vec![clip];
+                        self.begin_clip_drag(clip, Zone::Body, view.t(origin.x), track_index, false);
                     }
                     _ => {
                         let t = view.t(origin.x);
@@ -364,12 +354,13 @@ impl App {
                 },
             );
         }
+        self.paint_joins(&painter, &view, rect, track);
     }
 
     fn editor_spectrum(&mut self, ui: &mut Ui, rect: Rect, track: &Track) {
         let view = self.editor.view;
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, Color32::from_rgb(20, 18, 34));
+        painter.rect_filled(rect, 0.0, SPECTROGRAM_FLOOR);
         for clip in &track.clips {
             let body = clip_rect(&view, rect, clip);
             if body.right() < rect.left() || body.left() > rect.right() {
@@ -400,7 +391,7 @@ impl App {
                     }
                 }
                 _ => {
-                    painter.text(body.left_center().max(rect.left_center()) + egui::vec2(10.0, 0.0), Align2::LEFT_CENTER, "Computing spectrogram…", ui_font(11.0), TEXT_FAINT);
+                    painter.text(body.left_center().max(rect.left_center()) + egui::vec2(10.0, 0.0), Align2::LEFT_CENTER, "Computing spectrogram…", font_caption(), TEXT_3);
                 }
             }
         }
@@ -457,12 +448,12 @@ impl App {
 
     fn editor_chip_lane(&mut self, ui: &mut Ui, rect: Rect, track: &Track, phonemes: bool) {
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, BG_1);
-        painter.line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, LINE));
+        painter.rect_filled(rect, 0.0, PANEL);
+        painter.line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, DIVIDER));
         let chips = self.visible_chips(rect, track, phonemes);
         if chips.is_empty() {
             if !phonemes && !track.clips.is_empty() {
-                painter.text(rect.left_center() + egui::vec2(10.0, 0.0), Align2::LEFT_CENTER, "No words here yet. Transcribe this track to find them.", ui_font(11.0), TEXT_FAINT);
+                painter.text(rect.left_center() + egui::vec2(10.0, 0.0), Align2::LEFT_CENTER, "No words here yet. Transcribe this track to find them.", font_caption(), TEXT_3);
             }
             return;
         }
@@ -499,19 +490,19 @@ impl App {
             let is_selected = !phonemes && selected_word == Some((chip.hit.source, chip.hit.word_index));
             let base = track_color(track.color);
             let fill = if is_selected {
-                ACCENT
+                TEXT
             } else if is_hover {
-                mix(BG_3, base, 0.6)
+                mix(CONTROL, base, 0.6)
             } else if phonemes {
                 phoneme_color(&chip.hit.text)
             } else {
                 // Low-confidence words are dimmer, a cue that the transcript may be wrong here.
-                mix(BG_2, base, 0.1 + 0.3 * chip.hit.confidence)
+                mix(RAISED, base, 0.1 + 0.3 * chip.hit.confidence)
             };
-            painter.rect_filled(r, CornerRadius::same(3), fill);
+            painter.rect_filled(r, R_S, fill);
             if r.width() > 12.0 {
-                let color = if is_selected { BG_0 } else { TEXT };
-                let font = if phonemes { mono(9.5) } else { ui_font(11.5) };
+                let color = if is_selected { BASE } else { TEXT };
+                let font = if phonemes { font_micro() } else { font_caption() };
                 let inner = painter.with_clip_rect(r.intersect(rect));
                 // Centred when it fits. Otherwise the start of the word is what identifies it.
                 let galley = inner.layout_no_wrap(chip.hit.text.clone(), font, color);
@@ -534,13 +525,13 @@ impl App {
 fn phoneme_color(symbol: &str) -> Color32 {
     use mp_analysis::g2p::{class_of, PhonemeClass::*};
     match class_of(symbol) {
-        Vowel => Color32::from_rgb(66, 74, 110),
-        Glide => Color32::from_rgb(58, 88, 100),
-        Nasal => Color32::from_rgb(70, 80, 80),
-        VoicedFricative => Color32::from_rgb(96, 76, 64),
-        UnvoicedFricative => Color32::from_rgb(112, 74, 60),
-        VoicedStop => Color32::from_rgb(88, 62, 88),
-        UnvoicedStop => Color32::from_rgb(102, 60, 84),
-        Affricate => Color32::from_rgb(108, 68, 72),
+        Vowel => PHONEME_VOWEL,
+        Glide => PHONEME_GLIDE,
+        Nasal => PHONEME_NASAL,
+        VoicedFricative => PHONEME_VOICED_FRICATIVE,
+        UnvoicedFricative => PHONEME_FRICATIVE,
+        VoicedStop => PHONEME_VOICED_STOP,
+        UnvoicedStop => PHONEME_STOP,
+        Affricate => PHONEME_AFFRICATE,
     }
 }

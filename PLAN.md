@@ -1,5 +1,8 @@
 # Mouthpiece: a sentence-mixing DAW in Rust
 
+> The original plan. The architecture below still holds. The interface has since been redesigned:
+> [docs/WORKFLOWS.md](docs/WORKFLOWS.md) and [docs/DESIGN.md](docs/DESIGN.md) replace the UX section.
+
 Mouthpiece is a local, real-time DAW built around one job: **take a song's stems, leave the
 instrumentals alone, and cut the vocal into a new sentence.** The arrangement and device workflow
 is modelled on Bitwig. What a general DAW doesn't have is that every word, and every phoneme, of

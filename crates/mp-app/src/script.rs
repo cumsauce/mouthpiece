@@ -1,9 +1,9 @@
 //! Drives the real running app from a script, for end-to-end testing. Set MOUTHPIECE_SCRIPT to a
 //! file with one step per line. It uses real input events, so it exercises what a user would.
 //!
-//! Steps: wait <s> | idle | action <Name> | search <text> | enter | sentence <text> | place_sentence
+//! Steps: wait <s> | idle | action <Name> | say <text> | place
 //! | select_track <i> | select_clip <track> <clip> | open_track <i> | open_clip <track> <clip>
-//! | bottom <editor/devices/mixer> | browser <words/sentence/files> | seek <s> | range <a> <b>
+//! | bottom <editor/devices/mixer> | tab <say/transcript/sources> | seek <s> | range <a> <b> | resize <w> <h>
 //! | import <path> | drop <path> | download <model id> | mute_all <tracks to keep, comma separated> | transcript <part of source name> <word> <word>... | export <path> | save <path>
 //! | open <path> | move <x> <y> | click/dclick/rclick/cmdclick <x> <y>
 //! | drag/altdrag/shiftdrag/cmddrag <x1> <y1> <x2> <y2> | key <name> | type <text>
@@ -11,8 +11,8 @@
 //! | screenshot <path> | dump <path> | quit
 
 use crate::app::{App, BottomTab};
-use crate::browser::BrowserTab;
-use crate::export_ui::RangeChoice;
+use crate::panels::render::RangeChoice;
+use crate::panels::say::SayTab;
 use eframe::egui::{self, Event, Modifiers, PointerButton};
 use mp_analysis::transcribe::{finish_transcript, RawSegment, RawWord};
 use mp_export::Format;
@@ -111,22 +111,12 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
                 println!("script: UNKNOWN ACTION {rest}");
             }
         }
-        "search" => {
-            app.browser.tab = BrowserTab::Words;
-            app.browser.query = rest.to_string();
-            app.run_search();
+        "say" => {
+            app.say.tab = SayTab::Say;
+            app.say.text = rest.to_string();
+            app.say.dirty = true;
         }
-        "enter" => {
-            if let Some(hit) = app.browser.results.get(app.browser.selected).cloned() {
-                app.place_hit_at_playhead(&hit);
-            }
-        }
-        "sentence" => {
-            app.browser.tab = BrowserTab::Sentence;
-            app.browser.sentence = rest.to_string();
-            app.browser.sentence_dirty = true;
-        }
-        "place_sentence" => app.place_sentence(),
+        "place" => app.place_sentence(),
         "select_track" => app.selected_track = app.project.tracks.get(usizes[0]).map(|t| t.id),
         "select_clip" => {
             if let Some(c) = app.project.tracks.get(usizes[0]).and_then(|t| t.clips.get(usizes[1])) {
@@ -151,13 +141,15 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
                 _ => BottomTab::Editor,
             };
         }
-        "browser" => {
-            app.browser.tab = match rest {
-                "sentence" => BrowserTab::Sentence,
-                "files" => BrowserTab::Files,
-                _ => BrowserTab::Words,
+        "tab" => {
+            app.say.tab = match rest {
+                "transcript" => SayTab::Transcript,
+                "sources" => SayTab::Sources,
+                "words" => SayTab::Words,
+                _ => SayTab::Say,
             };
         }
+        "resize" => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(numbers[0], numbers[1]))),
         "seek" => app.seek(numbers[0] as f64),
         "range" => app.editor.range = Some((numbers[0] as f64, numbers[1] as f64)),
         "import" => app.import_path(rest.into()),
@@ -270,7 +262,7 @@ fn inject_transcript(app: &mut App, rest: &str) {
     let segment = RawSegment { start: 0.0, end: duration, words: raw };
     let transcript = finish_transcript(vec![segment], &runtime.mono, app.sample_rate as f32, "script");
     app.index.set_transcript(id.0, transcript);
-    app.browser.search_dirty = true;
+    app.say.dirty = true;
 }
 
 fn dump(app: &App, path: &str) {
@@ -282,17 +274,21 @@ fn dump(app: &App, path: &str) {
         "selection": app.selection.len(),
         "selected_track": app.selected_track.and_then(|t| app.project.track(t)).map(|t| t.name.clone()),
         "words": app.index.word_count(),
-        "results": app.browser.results.iter().map(|h| h.text.clone()).collect::<Vec<_>>(),
-        "plan": app.browser.plan.iter().map(|p| (p.text.clone(), format!("{:?}", p.source), p.options.len())).collect::<Vec<_>>(),
+        "plan": app.say.plan.iter().map(|p| (p.text.clone(), format!("{:?}", p.source), p.options.len())).collect::<Vec<_>>(),
         "transcripts": app.project.sources.iter().filter_map(|s| app.index.transcript(s.id.0)).map(|t| t.words.iter().map(|w| serde_json::json!({
             "text": w.text, "start": w.start, "end": w.end, "conf": w.confidence,
             "phonemes": w.phonemes.iter().map(|p| format!("{}:{:.3}", p.symbol, p.start)).collect::<Vec<_>>(),
             "pitch": w.pitch_hz })).collect::<Vec<_>>()).collect::<Vec<_>>(),
         "undo": app.history.labels().collect::<Vec<_>>(),
         "show_shortcuts": app.show_shortcuts,
-        "query": app.browser.query,
+        "say_text": app.say.text,
+        "say_focus": app.say.focus,
+        "selected_takes": app.say.plan.iter().map(|p| p.selected).collect::<Vec<_>>(),
         "pending_discard": format!("{:?}", app.pending_discard),
         "master_devices": app.project.master.devices.len(),
+        "made_words": app.project.words.iter().map(|w| (w.name.clone(), w.parts.len())).collect::<Vec<_>>(),
+        "video_frames": app.video.values().map(|v| v.frame_count()).sum::<usize>(),
+        "has_video": app.project.has_video(),
         "toasts": app.toasts.iter().map(|t| t.text.clone()).collect::<Vec<_>>(),
         "bottom_tab": format!("{:?}", app.bottom_tab),
         "show_bottom": app.show_bottom,
@@ -303,13 +299,13 @@ fn dump(app: &App, path: &str) {
             "clips": t.clips.iter().map(|c| serde_json::json!({
                 "start": c.start, "src_in": c.src_in, "src_out": c.src_out, "stretch": c.stretch,
                 "pitch": c.pitch, "reversed": c.reversed, "label": c.label, "fade_in": c.fade_in,
-                "fade_out": c.fade_out, "gain": c.gain_db })).collect::<Vec<_>>(),
+                "fade_out": c.fade_out, "gain": c.gain_db, "group": c.group.map(|g| g.0), "word": c.word_name })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     });
     let _ = std::fs::write(path, serde_json::to_vec_pretty(&state).unwrap_or_default());
 }
 
-fn save_png(path: &str, image: &egui::ColorImage) {
+pub fn save_png(path: &str, image: &egui::ColorImage) {
     let Ok(file) = std::fs::File::create(path) else { return };
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), image.size[0] as u32, image.size[1] as u32);
     encoder.set_color(png::ColorType::Rgba);

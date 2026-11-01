@@ -2,11 +2,10 @@
 //! so a clip behaves the same everywhere.
 
 use crate::app::App;
-use crate::theme::*;
-use crate::timeline::TimeView;
-use crate::waveform::draw_clip_waveform;
-use crate::widgets::{draw_icon, Icon};
-use eframe::egui::{self, Align2, Color32, CornerRadius, CursorIcon, Painter, Pos2, Rect, Stroke, StrokeKind};
+use crate::ds::*;
+use crate::panels::timeline::TimeView;
+use crate::panels::waveform::draw_clip_waveform;
+use eframe::egui::{self, Align2, CursorIcon, Painter, Pos2, Rect, Stroke, StrokeKind};
 use mp_engine::render_cache::RenderKey;
 use mp_model::{Clip, ClipId, Track, TrackId};
 
@@ -37,7 +36,7 @@ impl Zone {
 
     pub fn hint(self) -> &'static str {
         match self {
-            Zone::Body => "Drag to move. Alt-drag to copy. Double-click to edit.",
+            Zone::Body => "Drag to move. Alt-drag to copy. In a word, click again to select one piece. Double-click to edit.",
             Zone::TrimStart | Zone::TrimEnd => "Drag to trim. Alt-drag to stretch.",
             Zone::StretchStart | Zone::StretchEnd => "Drag to stretch.",
             Zone::FadeIn | Zone::FadeOut => "Drag to set the fade.",
@@ -96,6 +95,47 @@ pub struct PaintOptions {
 }
 
 impl App {
+    /// Marks what's joined on a lane: an X across crossfades, and a bracket with a name over each group.
+    pub fn paint_joins(&self, painter: &Painter, view: &TimeView, lane: Rect, track: &Track) {
+        let visible = |a: f32, b: f32| b >= lane.left().min(view.left) && a <= view.left + view.width;
+        let mut clips: Vec<&Clip> = track.clips.iter().collect();
+        clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        for pair in clips.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if b.start < a.end() && b.end() > a.end() {
+                let (x0, x1) = (view.x(b.start), view.x(a.end()));
+                if x1 - x0 > 3.0 && visible(x0, x1) {
+                    let (top, bottom) = (lane.top() + HEADER_H, lane.bottom());
+                    let stroke = Stroke::new(1.0, alpha(TEXT, 170));
+                    painter.line_segment([egui::pos2(x0, top), egui::pos2(x1, bottom)], stroke);
+                    painter.line_segment([egui::pos2(x0, bottom), egui::pos2(x1, top)], stroke);
+                }
+            }
+        }
+        let mut done: Vec<mp_model::GroupId> = Vec::new();
+        for clip in &clips {
+            let Some(group) = clip.group else { continue };
+            if done.contains(&group) {
+                continue;
+            }
+            done.push(group);
+            let members = clips.iter().filter(|c| c.group == Some(group));
+            let (a, b) = members.fold((f64::MAX, 0f64), |(a, b), c| (a.min(c.start), b.max(c.end())));
+            let (x0, x1) = (view.x(a), view.x(b));
+            if !visible(x0, x1) {
+                continue;
+            }
+            let y = lane.bottom() - SP_HALF;
+            painter.line_segment([egui::pos2(x0, y), egui::pos2(x1, y)], Stroke::new(2.0, TEXT_2));
+            if let Some(name) = &clip.word_name {
+                let galley = painter.layout_no_wrap(name.clone(), font_micro(), TEXT);
+                if galley.size().x + SP_1 < x1 - x0 {
+                    painter.galley(egui::pos2(x0 + SP_HALF, y - galley.size().y - SP_HALF), galley, TEXT);
+                }
+            }
+        }
+    }
+
     pub fn clip_label(&self, clip: &Clip) -> String {
         if let Some(label) = &clip.label {
             return label.clone();
@@ -121,10 +161,10 @@ impl App {
         }
         let mut base = track_color(track.color);
         if clip.muted || o.track_muted {
-            base = mix(base, BG_3, 0.8);
+            base = mix(base, CONTROL, 0.8);
         }
-        let radius = CornerRadius::same(3);
-        painter.rect_filled(body, radius, mix(BG_1, base, 0.2));
+        let radius = R_S;
+        painter.rect_filled(body, radius, mix(PANEL, base, 0.2));
 
         let waveform_rect = Rect::from_min_max(egui::pos2(body.left(), lane.top() + HEADER_H), body.max);
         if o.show_waveform {
@@ -137,8 +177,8 @@ impl App {
                     clip,
                     &runtime.peaks,
                     self.sample_rate as f64,
-                    mix(BG_1, base, 0.85),
-                    mix(base, Color32::WHITE, 0.55),
+                    mix(PANEL, base, 0.85),
+                    mix(base, TEXT, 0.6),
                 );
             }
         }
@@ -147,19 +187,19 @@ impl App {
         let header = Rect::from_min_size(body.min, egui::vec2(body.width(), HEADER_H));
         painter.rect_filled(
             header,
-            CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 },
-            mix(BG_1, base, if o.selected { 0.75 } else { 0.42 }),
+            egui::CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 },
+            mix(PANEL, base, if o.selected { 0.75 } else { 0.42 }),
         );
         if body.width() > 16.0 {
             let clipped = painter.with_clip_rect(painter.clip_rect().intersect(header));
-            let text_color = if o.selected { Color32::WHITE } else { TEXT };
+            let text_color = TEXT;
             let x = body.left().max(view.left) + 4.0;
-            clipped.text(egui::pos2(x, header.center().y), Align2::LEFT_CENTER, self.clip_label(clip), ui_font(10.5), text_color);
+            clipped.text(egui::pos2(x, header.center().y), Align2::LEFT_CENTER, self.clip_label(clip), font_micro(), text_color);
         }
         self.paint_badges(painter, body, clip);
 
         // Fades, as a shaded corner and a handle that appears on hover.
-        let fade_fill = alpha(BG_0, 150);
+        let fade_fill = alpha(BASE, 150);
         if clip.fade_in > 0.012 {
             let x = view.x(clip.start + clip.fade_in);
             painter.add(egui::Shape::convex_polygon(
@@ -189,8 +229,14 @@ impl App {
             painter.rect_filled(Rect::from_min_size(body.left_bottom() - egui::vec2(0.0, 2.0), egui::vec2(body.width(), 2.0)), 0.0, c);
         }
 
-        let outline = if o.selected { Stroke::new(1.5, Color32::WHITE) } else { Stroke::new(1.0, mix(BG_0, base, 0.25)) };
+        let outline = if o.selected { Stroke::new(1.5, ACCENT) } else { Stroke::new(1.0, mix(BASE, base, 0.25)) };
         painter.rect_stroke(body, radius, outline, StrokeKind::Inside);
+        if let Some(born) = self.flash.get(&clip.id) {
+            let fade = 1.0 - born.elapsed().as_secs_f32() / MOTION_FLASH;
+            if fade > 0.0 {
+                painter.rect_filled(body, radius, alpha(ACCENT, (fade * 90.0) as u8));
+            }
+        }
     }
 
     fn paint_badges(&self, painter: &Painter, body: Rect, clip: &Clip) {
@@ -199,7 +245,7 @@ impl App {
         }
         let mut x = body.right() - 4.0;
         let mut badge = |text: String| {
-            let galley = painter.layout_no_wrap(text, mono(9.0), TEXT);
+            let galley = painter.layout_no_wrap(text, font_micro(), TEXT);
             let w = galley.size().x;
             if x - w > body.left() + 30.0 {
                 painter.galley(egui::pos2(x - w, body.top() + 2.0), galley, TEXT);
@@ -262,7 +308,7 @@ impl App {
     /// Begins dragging a clip. `alt_copy` duplicates the selection and drags the copies.
     pub fn begin_clip_drag(&mut self, clip: ClipId, zone: Zone, pointer_t: f64, press_track: usize, alt_copy: bool) {
         if !self.selection.contains(&clip) {
-            self.selection = vec![clip];
+            self.selection = if zone == Zone::Body { self.project.group_members(clip) } else { vec![clip] };
         }
         self.begin_gesture(match zone {
             Zone::Body => "Move clip",
@@ -272,15 +318,10 @@ impl App {
         });
         let mut anchor = clip;
         if alt_copy && zone == Zone::Body {
-            let mut copies = Vec::new();
-            for id in self.selection.clone() {
-                let start = self.project.clip(id).map_or(0.0, |c| c.start);
-                if let Some(copy) = self.project.duplicate_clip(id, start) {
-                    if id == clip {
-                        anchor = copy;
-                    }
-                    copies.push(copy);
-                }
+            let originals = self.selection.clone();
+            let copies = self.project.duplicate_clips(&originals, 0.0);
+            if let Some(i) = originals.iter().position(|id| *id == clip) {
+                anchor = copies.get(i).copied().unwrap_or(clip);
             }
             self.selection = copies;
         }
@@ -356,14 +397,20 @@ impl App {
             }
             Zone::FadeIn => {
                 if let Some(c) = self.project.clip_mut(drag.anchor) {
+                    c.fade_in_auto = false;
                     c.fade_in = (pointer_t - c.start).clamp(0.0, (c.length() - c.fade_out).max(0.0));
                 }
             }
             Zone::FadeOut => {
                 if let Some(c) = self.project.clip_mut(drag.anchor) {
+                    c.fade_out_auto = false;
                     c.fade_out = (c.end() - pointer_t).clamp(0.0, (c.length() - c.fade_in).max(0.0));
                 }
             }
+        }
+        // Overlaps crossfade as they happen, so that a drag can be judged by ear.
+        if !matches!(drag.zone, Zone::FadeIn | Zone::FadeOut) {
+            self.project.update_auto_crossfades();
         }
         self.needs_compile = true;
         self.clip_drag = Some(drag);

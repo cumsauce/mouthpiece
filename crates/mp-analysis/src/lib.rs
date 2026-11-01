@@ -11,6 +11,7 @@ pub mod sentence;
 pub mod spectrogram;
 pub mod tempo;
 pub mod transcribe;
+pub mod video;
 
 use serde::{Deserialize, Serialize};
 

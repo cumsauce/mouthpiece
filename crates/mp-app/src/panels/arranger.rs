@@ -1,16 +1,15 @@
 //! The composition view: track headers, clip lanes, ruler and overview.
 
 use crate::app::{App, BottomTab};
-use crate::lane::{clip_rect, hit_zone, paint_playhead, paint_snap_line, PaintOptions, Zone};
-use crate::theme::*;
-use crate::timeline::{draw_grid, draw_ruler};
-use crate::widgets::{self, fader, letter_toggle, meter};
-use eframe::egui::{self, Align2, CornerRadius, CursorIcon, Key, Rect, Sense, Stroke, StrokeKind, Ui};
+use crate::panels::lane::{clip_rect, hit_zone, paint_playhead, paint_snap_line, PaintOptions, Zone};
+use crate::ds::*;
+use crate::panels::timeline::{draw_grid, draw_ruler};
+use eframe::egui::{self, Align2, CursorIcon, Rect, Sense, Stroke, StrokeKind, Ui};
 use mp_model::{ClipId, TrackId};
 
-const HEADER_W: f32 = 196.0;
-const RULER_H: f32 = 28.0;
-const OVERVIEW_H: f32 = 22.0;
+const HEADER_W: f32 = 184.0;
+const RULER_H: f32 = 26.0;
+const OVERVIEW_H: f32 = 18.0;
 const MIN_TRACK_H: f32 = 44.0;
 const MAX_TRACK_H: f32 = 320.0;
 
@@ -23,12 +22,13 @@ impl App {
         let lanes = Rect::from_min_max(egui::pos2(ruler.left(), ruler.bottom()), egui::pos2(area.right(), overview.top()));
         let headers = Rect::from_min_max(egui::pos2(area.left(), ruler.bottom()), egui::pos2(ruler.left(), overview.top()));
 
+        self.arr_lanes_rect = lanes;
         self.arr_view.left = lanes.left();
         self.arr_view.width = lanes.width();
         if self.engine.is_playing() && self.clip_drag.is_none() {
             self.arr_view.follow(self.playhead);
         }
-        ui.painter().rect_filled(lanes, 0.0, BG_0);
+        ui.painter().rect_filled(lanes, 0.0, BASE);
 
         self.arranger_scroll(ui, lanes.union(headers).union(ruler));
         self.clamp_track_scroll(lanes.height());
@@ -38,16 +38,15 @@ impl App {
         self.ruler_ui(ui, ruler);
         self.overview(ui, overview);
 
-        // Top-left corner: project time, and the Add Track button.
+        // The corner above the headers holds Add Track, and the one below them stays blank.
         let corner = Rect::from_min_max(area.min, egui::pos2(ruler.left(), ruler.bottom()));
-        ui.painter().rect_filled(corner, 0.0, BG_2);
+        ui.painter().rect_filled(corner, 0.0, PANEL);
         let foot = Rect::from_min_max(egui::pos2(area.left(), overview.top()), egui::pos2(overview.left(), area.bottom()));
-        ui.painter().rect_filled(foot, 0.0, BG_2);
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(corner.shrink2(egui::vec2(8.0, 3.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-        if widgets::icon_button(&mut child, widgets::Icon::Plus, &widgets::keys("Add track (⌘T)")).clicked() {
+        ui.painter().rect_filled(foot, 0.0, PANEL);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(corner.shrink2(egui::vec2(SP_1, SP_HALF))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        if child.add(Button::ghost("Add track").small().icon(Icon::Plus).tip("Add an empty track", Some("⌘T"))).clicked() {
             self.run(crate::actions::Action::AddTrack);
         }
-        child.label(egui::RichText::new(format!("{} tracks", self.project.tracks.len())).color(TEXT_FAINT).size(11.0));
 
         if self.project.tracks.is_empty() {
             self.empty_state(ui, lanes.union(headers));
@@ -177,13 +176,14 @@ impl App {
                 match self.clip_at(&lanes, p, false) {
                     Some((clip, _, track)) => {
                         if cmd || shift {
-                            if let Some(i) = self.selection.iter().position(|c| *c == clip) {
-                                self.selection.remove(i);
+                            let members = self.project.group_members(clip);
+                            if self.selection.contains(&clip) {
+                                self.selection.retain(|c| !members.contains(c));
                             } else {
-                                self.selection.push(clip);
+                                self.selection.extend(members);
                             }
                         } else {
-                            self.selection = vec![clip];
+                            self.selection = self.click_selection(clip);
                         }
                         self.selected_track = Some(self.project.tracks[track].id);
                         self.master_selected = false;
@@ -212,7 +212,7 @@ impl App {
             if let Some(p) = response.interact_pointer_pos() {
                 if let Some((clip, _, track)) = self.clip_at(&lanes, p, false) {
                     if !self.selection.contains(&clip) {
-                        self.selection = vec![clip];
+                        self.selection = self.project.group_members(clip);
                     }
                     self.selected_track = Some(self.project.tracks[track].id);
                 }
@@ -230,9 +230,9 @@ impl App {
             let track = &self.project.tracks[*index];
             let is_selected = self.selected_track == Some(track.id);
             if is_selected {
-                painter.rect_filled(*lane, 0.0, alpha(track_color(track.color), 10));
+                painter.rect_filled(*lane, 0.0, alpha(track_color(track.color), 12));
             }
-            painter.line_segment([lane.left_bottom(), lane.right_bottom()], Stroke::new(1.0, LINE));
+            painter.line_segment([lane.left_bottom(), lane.right_bottom()], Stroke::new(1.0, DIVIDER));
             let muted = track.mute || (self.project.tracks.iter().any(|t| t.solo) && !track.solo);
             for clip in &track.clips {
                 let r = clip_rect(&view, *lane, clip);
@@ -254,6 +254,7 @@ impl App {
                 );
                 self.paint_word_labels(&painter, &view, *lane, clip);
             }
+            self.paint_joins(&painter, &view, *lane, track);
         }
 
         // Loop region tint, snap line, marquee and playhead go over the clips.
@@ -272,13 +273,13 @@ impl App {
     }
 
     /// Shows the words inside a vocal clip once zoomed in enough to read them.
-    fn paint_word_labels(&self, painter: &egui::Painter, view: &crate::timeline::TimeView, lane: Rect, clip: &mp_model::Clip) {
+    fn paint_word_labels(&self, painter: &egui::Painter, view: &crate::panels::timeline::TimeView, lane: Rect, clip: &mp_model::Clip) {
         // Word-sized clips already carry their label in the header.
-        if clip.label.is_some() || view.px_per_s < 60.0 {
+        if clip.label.is_some() || view.px_per_s < 220.0 {
             return;
         }
         let Some(transcript) = self.index.transcript(clip.source.0) else { return };
-        let y = lane.top() + crate::lane::HEADER_H + 1.0;
+        let y = lane.top() + crate::panels::lane::HEADER_H + 1.0;
         let clip_area = painter.clip_rect().intersect(clip_rect(view, lane, clip));
         let clipped = painter.with_clip_rect(clip_area);
         for word in &transcript.words {
@@ -290,10 +291,10 @@ impl App {
             if b < clip_area.left() || a > clip_area.right() {
                 continue;
             }
-            let galley = clipped.layout_no_wrap(word.text.clone(), ui_font(10.5), TEXT);
+            let galley = clipped.layout_no_wrap(word.text.clone(), font_micro(), TEXT);
             if galley.size().x < b - a {
                 let bg = Rect::from_min_size(egui::pos2(a, y), egui::vec2(b - a, 14.0));
-                clipped.rect_filled(bg, CornerRadius::same(2), alpha(BG_0, 170));
+                clipped.rect_filled(bg, R_S, alpha(BASE, 170));
                 clipped.galley(egui::pos2(a + 2.0, y), galley, TEXT);
             }
         }
@@ -301,7 +302,7 @@ impl App {
 
     fn select_in_marquee(&mut self, lanes: &[(usize, Rect)], m: Rect) {
         let view = self.arr_view;
-        self.selection = lanes
+        let touched: Vec<ClipId> = lanes
             .iter()
             .flat_map(|(i, lane)| {
                 self.project.tracks[*i]
@@ -311,6 +312,16 @@ impl App {
                     .map(|c| c.id)
             })
             .collect();
+        // Touching one piece of a word takes the whole word.
+        let mut selection = Vec::new();
+        for id in touched {
+            for member in self.project.group_members(id) {
+                if !selection.contains(&member) {
+                    selection.push(member);
+                }
+            }
+        }
+        self.selection = selection;
     }
 
     pub fn clip_context_menu(&mut self, ui: &mut Ui) {
@@ -319,6 +330,8 @@ impl App {
             ("Split at playhead", "S", A::Split),
             ("Duplicate", "⌘D", A::Duplicate),
             ("Delete", "⌫", A::Delete),
+            ("Next take", "T", A::NextTake),
+            ("Repeat", "⇧D", A::Repeat),
             ("Reverse", "R", A::Reverse),
             ("Mute", "M", A::MuteClip),
             ("Slice to words", "W", A::SliceToWords),
@@ -326,11 +339,13 @@ impl App {
             ("Quantize", "Q", A::Quantize),
             ("Close gaps", "G", A::CloseGaps),
             ("Fit to tempo", "", A::FitToTempo),
-            ("Reset stretch and pitch", "⇧R", A::ResetStretch),
+            ("Crossfade", "X", A::Crossfade),
+            ("Save as a word", "⇧W", A::SaveWord),
+            ("Restore original", "⇧R", A::RestoreOriginal),
             ("Transcribe", "⇧⌘T", A::Transcribe),
         ];
         for (name, key, action) in items {
-            if ui.add(egui::Button::new(name).shortcut_text(widgets::keys(key))).clicked() {
+            if menu_item(ui, name, (!key.is_empty()).then_some(key)).clicked() {
                 self.run(action);
                 ui.close();
             }
@@ -358,169 +373,147 @@ impl App {
 
     fn track_headers(&mut self, ui: &mut Ui, area: Rect, lanes_area: Rect) {
         let rows = self.lane_rects(area);
-        ui.painter().rect_filled(area, 0.0, BG_1);
+        ui.painter().rect_filled(area, 0.0, PANEL);
         let clip = ui.clip_rect().intersect(area);
-        let mut remove_gesture = false;
         for (index, row) in rows {
             if row.bottom() < area.top() || row.top() > area.bottom() {
                 continue;
             }
-            let peaks = self.decayed_meter(index);
-            let track_id = self.project.tracks[index].id;
-            let selected = self.selected_track == Some(track_id);
-            let color = track_color(self.project.tracks[index].color);
-            let mut child = ui.new_child(egui::UiBuilder::new().id_salt(("hdr", track_id.0)).max_rect(row));
-            child.set_clip_rect(clip);
+            self.track_header(ui, index, row, clip);
+            self.track_resize_grip(ui, index, row, lanes_area);
+        }
+        ui.painter().line_segment([area.right_top(), area.right_bottom()], Stroke::new(1.0, DIVIDER));
+    }
 
-            // The background goes in first so widgets stay on top of it.
-            let back = child.interact(row, child.scope_id().with("back"), Sense::click());
-            let fill = if selected { BG_3 } else if back.hovered() { BG_2 } else { BG_1 };
-            child.painter().rect_filled(row, 0.0, fill);
-            child.painter().rect_filled(Rect::from_min_size(row.min, egui::vec2(4.0, row.height())), 0.0, color);
-            child.painter().line_segment([row.left_bottom(), row.right_bottom()], Stroke::new(1.0, LINE));
-            if back.clicked() {
-                self.selected_track = Some(track_id);
-                self.master_selected = false;
-            }
-            if back.double_clicked() {
-                self.open_track_in_editor(track_id);
-            }
-            if back.hovered() {
-                self.hint = "Double-click to open this track in the editor.".to_string();
-            }
-            back.context_menu(|ui| self.track_context_menu(ui, track_id));
+    fn track_header(&mut self, ui: &mut Ui, index: usize, row: Rect, clip: Rect) {
+        let peaks = self.decayed_meter(index);
+        let track = self.project.tracks[index].clone();
+        let selected = self.selected_track == Some(track.id);
+        let color = track_color(track.color);
+        let mut child = ui.new_child(egui::UiBuilder::new().id_salt(("hdr", track.id.0)).max_rect(row));
+        child.set_clip_rect(clip);
 
-            let mut content = child.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(row.min + egui::vec2(10.0, 5.0), row.max - egui::vec2(16.0, 3.0))));
-            let (name, kind, mute, solo) = {
-                let t = &self.project.tracks[index];
-                (t.name.clone(), t.kind, t.mute, t.solo)
-            };
-            content.horizontal(|ui| {
-                if self.renaming_track.as_ref().is_some_and(|(t, _)| *t == track_id) {
-                    let mut text = self.renaming_track.as_ref().map_or(String::new(), |r| r.1.clone());
-                    let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(120.0));
-                    r.request_focus();
-                    let done = r.lost_focus() || ui.input(|i| i.key_pressed(Key::Enter));
-                    self.renaming_track = Some((track_id, text.clone()));
-                    if done {
-                        self.renaming_track = None;
-                        self.edit("Rename track", |p| {
-                            if let Some(t) = p.track_mut(track_id) {
-                                t.name = text;
-                            }
-                        });
-                    }
-                } else {
-                    ui.label(egui::RichText::new(truncate(&name, 20)).color(if selected { TEXT } else { mix(TEXT, TEXT_DIM, 0.3) }).size(12.5).strong());
-                }
-            });
-            content.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                if letter_toggle(ui, "M", mute, MUTE, "Mute").clicked() {
-                    self.edit("Mute track", |p| {
-                        if let Some(t) = p.track_mut(track_id) {
-                            t.mute = !t.mute;
-                        }
-                    });
-                }
-                if letter_toggle(ui, "S", solo, SOLO, "Solo").clicked() {
+        // The background goes in first, so that controls stay on top of it.
+        let back = child.interact(row, child.scope_id().with("back"), Sense::click());
+        let fill = if selected { RAISED } else { PANEL };
+        child.painter().rect_filled(row, 0.0, fill);
+        child.painter().rect_filled(Rect::from_min_size(row.min, egui::vec2(3.0, row.height())), 0.0, color);
+        child.painter().line_segment([row.left_bottom(), row.right_bottom()], Stroke::new(1.0, DIVIDER));
+        if back.clicked() {
+            self.selected_track = Some(track.id);
+            self.master_selected = false;
+            self.selection.clear();
+        }
+        if back.double_clicked() {
+            self.open_track_in_editor(track.id);
+        }
+        if back.hovered() {
+            self.hint = "Double-click to open this track in the editor. Right-click for more.".to_string();
+        }
+        back.context_menu(|ui| self.track_context_menu(ui, track.id));
+
+        let inner = Rect::from_min_max(row.min + egui::vec2(SP_3, SP_2), row.max - egui::vec2(SP_3, SP_1));
+        let mut content = child.new_child(egui::UiBuilder::new().max_rect(inner));
+        content.spacing_mut().item_spacing.y = SP_1;
+        content.horizontal(|ui| {
+            ui.set_width(inner.width());
+            ui.label(if selected { strong(truncate(&track.name, 15)) } else { strong(truncate(&track.name, 15)).color(TEXT_2) });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = SP_HALF;
+                if letter_toggle(ui, "S", track.solo, SOLO, "Solo", None).clicked() {
                     self.edit("Solo track", |p| {
-                        if let Some(t) = p.track_mut(track_id) {
+                        if let Some(t) = p.track_mut(track.id) {
                             t.solo = !t.solo;
                         }
                     });
                 }
-                ui.add_space(3.0);
-                let mut db = self.project.tracks[index].gain_db;
-                let f = fader(ui, &mut db, egui::vec2(96.0, 16.0));
-                if f.started {
-                    self.begin_gesture("Change track gain");
+                if letter_toggle(ui, "M", track.mute, MUTE, "Mute", None).clicked() {
+                    self.edit("Mute track", |p| {
+                        if let Some(t) = p.track_mut(track.id) {
+                            t.mute = !t.mute;
+                        }
+                    });
                 }
-                if f.changed {
-                    if let Some(t) = self.project.track_mut(track_id) {
-                        t.gain_db = db;
-                    }
-                    self.needs_compile = true;
-                }
-                if f.finished {
-                    remove_gesture = true;
-                }
-                f.response.on_hover_text(format!("{db:+.1} dB"));
             });
-            if row.height() > 62.0 {
-                let label = if self.index.transcript(self.project.tracks[index].clips.first().map_or(0, |c| c.source.0)).is_some() {
-                    format!("{} · {} words", kind.label(), self.project.tracks[index].clips.first().and_then(|c| self.index.transcript(c.source.0)).map_or(0, |t| t.words.len()))
-                } else {
-                    kind.label().to_string()
-                };
-                content.label(egui::RichText::new(label).color(TEXT_FAINT).size(10.5));
-            }
-
-            // Meter along the right edge.
-            let meter_rect = Rect::from_min_max(egui::pos2(row.right() - 11.0, row.top() + 5.0), egui::pos2(row.right() - 4.0, row.bottom() - 5.0));
-            meter(child.painter(), meter_rect, peaks);
-
-            // Drag the bottom edge to resize, like a window.
-            let grip = Rect::from_min_max(egui::pos2(row.left(), row.bottom() - 3.0), egui::pos2(lanes_area.right(), row.bottom() + 2.0));
-            let resize = ui.interact(grip, ui.scope_id().with(("resize", track_id.0)), Sense::drag());
-            if resize.hovered() || resize.dragged() {
-                ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
-            }
-            if resize.dragged() {
-                if let Some(t) = self.project.track_mut(track_id) {
-                    t.height = (t.height + resize.drag_delta().y).clamp(MIN_TRACK_H, MAX_TRACK_H);
-                }
-            }
+        });
+        let mut db = track.gain_db;
+        let f = fader(&mut content, &mut db, egui::vec2(inner.width(), 14.0));
+        if f.started {
+            self.begin_gesture("Change track gain");
         }
-        if remove_gesture {
+        if f.changed {
+            if let Some(t) = self.project.track_mut(track.id) {
+                t.gain_db = db;
+            }
+            self.needs_compile = true;
+        }
+        if f.finished {
             self.end_gesture();
         }
-        ui.painter().line_segment([area.right_top(), area.right_bottom()], Stroke::new(1.0, LINE));
+        tip(f.response, &format!("{db:+.1} dB. Double-click for 0 dB."), None);
+
+        if row.height() >= 60.0 {
+            let source = track.clips.first().and_then(|c| self.project.source(c.source)).map(|s| (s.id, s.name.clone()));
+            let job = source.as_ref().and_then(|(_, name)| self.jobs.active.iter().find(|j| j.label == format!("Transcribing {name}")).map(|j| j.fraction));
+            let words = source.as_ref().and_then(|(id, _)| self.index.transcript(id.0)).map(|t| t.words.len());
+            if let Some(fraction) = job {
+                content.label(caption(format!("Transcribing {:.0}%", fraction.unwrap_or(0.0) * 100.0)));
+                progress(&mut content, fraction, inner.width());
+            } else if let Some(words) = words {
+                content.label(caption(format!("{} · {words} words", track.kind.label())));
+            } else {
+                content.label(caption(track.kind.label()));
+            }
+        }
+
+        let meter_rect = Rect::from_min_max(egui::pos2(row.right() - 7.0, row.top() + SP_1), egui::pos2(row.right() - 2.0, row.bottom() - SP_1));
+        meter(child.painter(), meter_rect, peaks);
+    }
+
+    /// Dragging a track's bottom edge resizes it.
+    fn track_resize_grip(&mut self, ui: &mut Ui, index: usize, row: Rect, lanes_area: Rect) {
+        let id = self.project.tracks[index].id;
+        let grip = Rect::from_min_max(egui::pos2(row.left(), row.bottom() - 3.0), egui::pos2(lanes_area.left(), row.bottom() + 2.0));
+        let resize = ui.interact(grip, ui.scope_id().with(("resize", id.0)), Sense::drag());
+        if resize.hovered() || resize.dragged() {
+            ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
+        }
+        if resize.dragged() {
+            if let Some(t) = self.project.track_mut(id) {
+                t.height = (t.height + resize.drag_delta().y).clamp(MIN_TRACK_H, MAX_TRACK_H);
+            }
+        }
     }
 
     fn track_context_menu(&mut self, ui: &mut Ui, track: TrackId) {
-        self.selected_track = Some(track);
-        if ui.button("Open in editor").clicked() {
+        if menu_item(ui, "Open in editor", None).clicked() {
             self.open_track_in_editor(track);
             ui.close();
         }
-        if ui.button("Rename").clicked() {
-            let name = self.project.track(track).map_or(String::new(), |t| t.name.clone());
-            self.renaming_track = Some((track, name));
-            ui.close();
-        }
-        if ui.button("Transcribe").clicked() {
+        if menu_item(ui, "Transcribe", Some("⇧⌘T")).clicked() {
+            self.selected_track = Some(track);
+            self.selection.clear();
             self.run(crate::actions::Action::Transcribe);
             ui.close();
         }
-        if ui.button("Slice to words").clicked() {
+        if menu_item(ui, "Slice to words", Some("W")).clicked() {
+            self.selected_track = Some(track);
             self.selection.clear();
             self.slice_selection_to_words();
             ui.close();
         }
-        ui.menu_button("Type", |ui| {
-            for kind in [mp_model::TrackKind::Vocal, mp_model::TrackKind::Drums, mp_model::TrackKind::Bass, mp_model::TrackKind::Music] {
-                if ui.button(kind.label()).clicked() {
-                    self.edit("Change track type", |p| {
-                        if let Some(t) = p.track_mut(track) {
-                            t.kind = kind;
-                        }
-                    });
-                    ui.close();
-                }
-            }
-        });
-        ui.separator();
+        menu_separator(ui);
         let position = self.project.tracks.iter().position(|t| t.id == track).unwrap_or(0);
-        if ui.add_enabled(position > 0, egui::Button::new("Move up")).clicked() {
+        if position > 0 && menu_item(ui, "Move up", None).clicked() {
             self.edit("Move track", |p| p.tracks.swap(position, position - 1));
             ui.close();
         }
-        if ui.add_enabled(position + 1 < self.project.tracks.len(), egui::Button::new("Move down")).clicked() {
+        if position + 1 < self.project.tracks.len() && menu_item(ui, "Move down", None).clicked() {
             self.edit("Move track", |p| p.tracks.swap(position, position + 1));
             ui.close();
         }
-        if ui.button("Delete track").clicked() {
+        if menu_item(ui, "Delete track", Some("⌘⌫")).clicked() {
+            self.selected_track = Some(track);
             self.run(crate::actions::Action::DeleteTrack);
             ui.close();
         }
@@ -545,7 +538,7 @@ impl App {
             self.hint = "Click to move the playhead. Shift-drag to set the loop. Drag to scrub.".to_string();
         }
         let loop_band = Rect::from_min_max(egui::pos2(view.x(self.project.loop_region.start), ruler.bottom() - 5.0), egui::pos2(view.x(self.project.loop_region.end), ruler.bottom()));
-        let color = if self.project.loop_region.enabled { ACCENT } else { BG_4 };
+        let color = if self.project.loop_region.enabled { ACCENT } else { CONTROL_HOVER };
         ui.painter().with_clip_rect(ruler).rect_filled(loop_band, 0.0, color);
 
         if shift && response.drag_started() {
@@ -589,7 +582,7 @@ impl App {
 
     /// Minimap of the whole project. Click or drag to move the view.
     fn overview(&mut self, ui: &mut Ui, rect: Rect) {
-        ui.painter().rect_filled(rect, 0.0, BG_2);
+        ui.painter().rect_filled(rect, 0.0, RAISED);
         let end = self.project.duration().max(self.arr_view.right_time()).max(1.0);
         let to_x = |t: f64| rect.left() + (t / end) as f32 * rect.width();
         let n = self.project.tracks.len().max(1);
@@ -601,6 +594,9 @@ impl App {
                 let r = Rect::from_min_max(egui::pos2(to_x(clip.start), y), egui::pos2(to_x(clip.end()).max(to_x(clip.start) + 1.0), y + (row_h - 1.0).max(1.0)));
                 ui.painter().rect_filled(r, 0.0, c);
             }
+        }
+        if self.project.tracks.is_empty() {
+            return;
         }
         let window = Rect::from_min_max(egui::pos2(to_x(self.arr_view.scroll), rect.top()), egui::pos2(to_x(self.arr_view.right_time()), rect.bottom()));
         ui.painter().rect(window, 2.0, alpha(TEXT, 18), Stroke::new(1.0, alpha(TEXT, 90)), StrokeKind::Inside);
@@ -618,34 +614,15 @@ impl App {
     }
 
     fn empty_state(&mut self, ui: &mut Ui, area: Rect) {
-        let c = area.center();
-        let painter = ui.painter();
-        let dash = Rect::from_center_size(c, egui::vec2(520.0, 250.0));
-        painter.rect_stroke(dash, CornerRadius::same(14), Stroke::new(1.0, BG_3), StrokeKind::Inside);
-        painter.text(c + egui::vec2(0.0, -78.0), Align2::CENTER_CENTER, "Drop your stems here", ui_font(26.0), TEXT);
-        painter.text(c + egui::vec2(0.0, -46.0), Align2::CENTER_CENTER, "Vocals are transcribed, tempo and key detected, tracks named and coloured.", ui_font(13.0), TEXT_DIM);
-        let steps = [
-            ("1", "Drop stems", "WAV, MP3, FLAC, AIFF, M4A, OGG"),
-            ("2", "Find words", "Search or type a whole sentence"),
-            ("3", "Render", "Export the finished mix to MP3"),
-        ];
-        for (i, (n, title, sub)) in steps.iter().enumerate() {
-            let x = c.x + (i as f32 - 1.0) * 165.0;
-            let y = c.y + 22.0;
-            painter.circle_filled(egui::pos2(x, y), 13.0, ACCENT_SOFT);
-            painter.text(egui::pos2(x, y), Align2::CENTER_CENTER, *n, ui_font(13.0), ACCENT);
-            painter.text(egui::pos2(x, y + 26.0), Align2::CENTER_CENTER, *title, ui_font(13.0), TEXT);
-            painter.text(egui::pos2(x, y + 44.0), Align2::CENTER_CENTER, *sub, ui_font(10.0), TEXT_FAINT);
-        }
-        let button_rect = Rect::from_center_size(c + egui::vec2(0.0, 98.0), egui::vec2(130.0, 28.0));
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(button_rect).layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight)));
-        if widgets::accent_button(&mut child, "Choose files…").clicked() {
+        let text = "Vocals transcribe themselves, and tempo and key are detected.";
+        if hero_state(ui, area, "Drop your stems here", text, "Choose files…").clicked() {
             self.import_dialog();
         }
     }
 
-    /// While a word is dragged from the browser, shows where it will land, and places it on release.
+    /// While a word is dragged from a list, shows where it will land, and places it on release.
     fn drop_word_on_lanes(&mut self, ui: &mut Ui, area: Rect) {
+        self.drop_saved_word_on_lanes(ui, area);
         let Some(hit) = self.hit_drag.clone() else { return };
         let view = self.arr_view;
         let (pointer, released, cmd) = ui.input(|i| (i.pointer.hover_pos().or(i.pointer.latest_pos()), i.pointer.any_released(), i.modifiers.command));
@@ -664,7 +641,7 @@ impl App {
             let ghost = Rect::from_min_max(egui::pos2(view.x(start), lane.top()), egui::pos2(view.x(start + duration).max(view.x(start) + 24.0), lane.bottom()));
             let painter = ui.painter_at(area);
             painter.rect(ghost, 3.0, alpha(ACCENT, 70), Stroke::new(1.5, ACCENT), StrokeKind::Inside);
-            painter.text(ghost.left_top() + egui::vec2(4.0, 2.0), Align2::LEFT_TOP, &hit.text, ui_font(11.0), TEXT);
+            painter.text(ghost.left_top() + egui::vec2(4.0, 2.0), Align2::LEFT_TOP, &hit.text, font_caption(), TEXT);
         }
         if released {
             self.hit_drag = None;
@@ -678,7 +655,44 @@ impl App {
                 if let Some((clip, track)) = placed {
                     self.selection = vec![clip];
                     self.selected_track = Some(track);
+                    self.flash_clips(&[clip]);
                 }
+            }
+        }
+    }
+}
+
+impl App {
+    /// The same for a saved word dragged from the My words tab.
+    fn drop_saved_word_on_lanes(&mut self, ui: &mut Ui, area: Rect) {
+        let Some(word) = self.word_drag else { return };
+        let Some((name, length)) = self.project.word(word).map(|w| (w.name.clone(), w.length())) else { return };
+        let view = self.arr_view;
+        let (pointer, released, cmd) = ui.input(|i| (i.pointer.hover_pos().or(i.pointer.latest_pos()), i.pointer.any_released(), i.modifiers.command));
+        let Some(pos) = pointer else { return };
+        let rows = self.lane_rects(area);
+        let track_index = self.track_index_at(&rows, pos.y);
+        let inside = area.contains(pos);
+        let start = if inside { self.snap_time(view.t(pos.x), &view, &[], cmd).max(0.0) } else { 0.0 };
+        if inside {
+            let lane = track_index.and_then(|i| rows.get(i).map(|r| r.1)).unwrap_or_else(|| Rect::from_min_size(egui::pos2(area.left(), rows.last().map_or(area.top(), |r| r.1.bottom() + 1.0)), egui::vec2(area.width(), 60.0)));
+            let ghost = Rect::from_min_max(egui::pos2(view.x(start), lane.top()), egui::pos2(view.x(start + length).max(view.x(start) + 24.0), lane.bottom()));
+            let painter = ui.painter_at(area);
+            painter.rect(ghost, 3.0, alpha(ACCENT, 70), Stroke::new(1.5, ACCENT), StrokeKind::Inside);
+            painter.text(ghost.left_top() + egui::vec2(SP_1, SP_HALF), Align2::LEFT_TOP, &name, font_caption(), TEXT);
+        }
+        if released {
+            self.word_drag = None;
+            self.snap_line = None;
+            if inside {
+                let target = track_index.map(|i| self.project.tracks[i].id);
+                let (placed, track) = self.edit(&format!("Place \"{name}\""), |p| {
+                    let track = target.unwrap_or_else(|| App::sentence_track(p));
+                    (p.place_word(word, track, start), track)
+                });
+                self.after_place(&placed, track);
+                self.selection = placed;
+                self.selected_track = Some(track);
             }
         }
     }

@@ -1,12 +1,12 @@
 //! Application state, and the operations that the panels and commands call.
 
-use crate::browser::BrowserState;
-use crate::editor::EditorState;
-use crate::export_ui::ExportDialog;
+use crate::panels::editor::EditorState;
+use crate::panels::lane::ClipDrag;
+use crate::panels::render::ExportDialog;
+use crate::panels::say::{SayState, SayTab};
+use crate::panels::timeline::TimeView;
 use crate::jobs::{file_stem, JobEvent, Jobs};
-use crate::lane::ClipDrag;
 use crate::script::Script;
-use crate::timeline::TimeView;
 use eframe::egui::{self, TextureHandle};
 use mp_analysis::peaks::Peaks;
 use mp_analysis::search::{Hit, WordIndex};
@@ -44,7 +44,15 @@ pub enum BottomTab {
 pub struct Toast {
     pub text: String,
     pub kind: ToastKind,
+    pub action: Option<ToastAction>,
     pub born: Instant,
+}
+
+/// A button on a toast.
+#[derive(Clone, Debug)]
+pub enum ToastAction {
+    Undo,
+    Reveal(PathBuf),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,6 +69,15 @@ pub enum AfterDiscard {
     Open,
     OpenPath(PathBuf),
     Quit,
+}
+
+/// The dialog that names a word.
+pub struct WordDialog {
+    pub name: String,
+    pub clips: Vec<ClipId>,
+    /// Set when renaming a saved word, rather than saving clips as one.
+    pub renaming: Option<mp_model::WordId>,
+    pub focused: bool,
 }
 
 pub struct App {
@@ -87,7 +104,7 @@ pub struct App {
     pub arr_view: TimeView,
     pub arr_scroll_y: f32,
     pub editor: EditorState,
-    pub browser: BrowserState,
+    pub say: SayState,
     pub grid_division: f64,
     pub snap: bool,
     pub snap_line: Option<f64>,
@@ -96,9 +113,17 @@ pub struct App {
     pub gesture: Option<(String, Project)>,
     pub hit_drag: Option<Hit>,
     pub clipboard: Vec<(mp_model::Clip, TrackId)>,
+    pub word_drag: Option<mp_model::WordId>,
+    pub word_dialog: Option<WordDialog>,
+    pub video: HashMap<SourceId, Arc<mp_analysis::video::VideoProxy>>,
+    pub video_texture: Option<TextureHandle>,
+    pub video_frame: Option<(SourceId, usize)>,
+    pub show_video: bool,
+    /// What's being auditioned, and from where, so the picture can follow it.
+    pub audition_source: Option<(SourceId, f64)>,
 
     pub show_inspector: bool,
-    pub show_browser: bool,
+    pub show_say: bool,
     pub show_bottom: bool,
     pub bottom_tab: BottomTab,
     pub palette_open: bool,
@@ -114,7 +139,12 @@ pub struct App {
     pub toasts: Vec<Toast>,
     pub jobs: Jobs,
     pub hint: String,
-    pub renaming_track: Option<(TrackId, String)>,
+    /// Where the arranger lanes are on screen, for things that float over them.
+    pub arr_lanes_rect: egui::Rect,
+    /// Clips that were just placed, and when, to draw attention to them.
+    pub flash: HashMap<ClipId, Instant>,
+    /// Takes of the last word looked up, as this is needed every frame while a clip is selected.
+    takes_memo: Option<(String, Vec<Hit>)>,
 
     pub playhead: f64,
     pub play_start: f64,
@@ -162,7 +192,7 @@ impl App {
             arr_view: TimeView::new(24.0),
             arr_scroll_y: 0.0,
             editor: EditorState::default(),
-            browser: BrowserState::default(),
+            say: SayState::default(),
             grid_division: 1.0,
             snap: true,
             snap_line: None,
@@ -171,8 +201,15 @@ impl App {
             gesture: None,
             hit_drag: None,
             clipboard: Vec::new(),
+            word_drag: None,
+            word_dialog: None,
+            video: HashMap::new(),
+            video_texture: None,
+            video_frame: None,
+            show_video: true,
+            audition_source: None,
             show_inspector: true,
-            show_browser: true,
+            show_say: true,
             show_bottom: true,
             bottom_tab: BottomTab::Editor,
             palette_open: false,
@@ -186,7 +223,9 @@ impl App {
             pitch_memo: None,
             toasts: Vec::new(),
             hint: String::new(),
-            renaming_track: None,
+            arr_lanes_rect: egui::Rect::ZERO,
+            flash: HashMap::new(),
+            takes_memo: None,
             playhead: 0.0,
             play_start: 0.0,
             meter_hold: HashMap::new(),
@@ -212,7 +251,11 @@ impl App {
     }
 
     pub fn toast(&mut self, kind: ToastKind, text: impl Into<String>) {
-        self.toasts.push(Toast { text: text.into(), kind, born: Instant::now() });
+        self.toasts.push(Toast { text: text.into(), kind, action: None, born: Instant::now() });
+    }
+
+    pub fn toast_with(&mut self, kind: ToastKind, text: impl Into<String>, action: ToastAction) {
+        self.toasts.push(Toast { text: text.into(), kind, action: Some(action), born: Instant::now() });
     }
 
     // ----- Editing -----
@@ -331,6 +374,7 @@ impl App {
         if let Some(buffer) = self.bank.get(source) {
             let voice = audition_voice(buffer.clone(), from, to, reversed, self.sample_rate);
             self.engine.audition(voice);
+            self.audition_source = Some((source, if reversed { to } else { from }));
         }
     }
 
@@ -354,14 +398,18 @@ impl App {
         project.add_track("Sentence", TrackKind::Vocal)
     }
 
-    /// Places a word at a position, padded slightly so its attack is never clipped.
-    pub fn place_hit_at(project: &mut Project, hit: &Hit, track: TrackId, at: f64) -> Option<ClipId> {
+    /// A hit's range with slight padding, so that a word's attack is never clipped.
+    pub fn padded_range(project: &Project, hit: &Hit) -> Option<(f64, f64)> {
         const PAD_BEFORE: f64 = 0.005;
         const PAD_AFTER: f64 = 0.01;
-        let source = SourceId(hit.source);
-        let duration = project.source(source)?.duration;
-        let (a, b) = ((hit.start - PAD_BEFORE).max(0.0), (hit.end + PAD_AFTER).min(duration));
-        project.add_slice(track, source, at, a, b, Some(hit.text.clone()))
+        let duration = project.source(SourceId(hit.source))?.duration;
+        Some(((hit.start - PAD_BEFORE).max(0.0), (hit.end + PAD_AFTER).min(duration)))
+    }
+
+    /// Places a word at a position.
+    pub fn place_hit_at(project: &mut Project, hit: &Hit, track: TrackId, at: f64) -> Option<ClipId> {
+        let (a, b) = Self::padded_range(project, hit)?;
+        project.add_slice(track, SourceId(hit.source), at, a, b, Some(hit.text.clone()))
     }
 
     /// Puts a search hit at the playhead on the Sentence track, then moves the playhead after it,
@@ -378,7 +426,121 @@ impl App {
             if let Some(end) = self.project.clip(clip).map(|c| c.end()) {
                 self.seek(end);
             }
+            self.after_place(&[clip], track);
         }
+    }
+
+    /// Which clips a click on one should select: its whole group, or if that's already selected,
+    /// just the one, so that a piece of a word can be adjusted by itself.
+    pub fn click_selection(&self, clip: ClipId) -> Vec<ClipId> {
+        let members = self.project.group_members(clip);
+        let whole_group_selected = members.len() > 1 && members.len() == self.selection.len() && members.iter().all(|m| self.selection.contains(m));
+        if whole_group_selected { vec![clip] } else { members }
+    }
+
+    /// Mixes a saved word down to audio, for hearing it without placing it.
+    pub fn render_word(&self, id: mp_model::WordId) -> mp_dsp::Stereo {
+        let mut out = mp_dsp::Stereo::default();
+        let Some(word) = self.project.word(id) else { return out };
+        let mut project = Project::default();
+        project.master.devices.clear();
+        let track = project.add_track("Word", TrackKind::Vocal);
+        if let Some(t) = project.track_mut(track) {
+            t.clips = word.parts.clone();
+        }
+        let graph = GraphCompiler::default().compile(&project, &self.bank, &self.cache, self.sample_rate);
+        let end = (word.length() * self.sample_rate as f64) as u64;
+        mp_engine::render_offline(
+            graph,
+            self.sample_rate as f32,
+            0,
+            end,
+            0,
+            |l, r| {
+                out.l.extend_from_slice(l);
+                out.r.extend_from_slice(r);
+            },
+            |_| true,
+        );
+        out
+    }
+
+    pub fn audition_buffer(&mut self, buffer: mp_dsp::Stereo) {
+        let seconds = buffer.frames() as f64 / self.sample_rate as f64;
+        if seconds > 0.0 {
+            let voice = audition_voice(Arc::new(buffer), 0.0, seconds, false, self.sample_rate);
+            self.engine.audition(voice);
+            self.audition_source = None;
+        }
+    }
+
+    pub fn audition_word(&mut self, id: mp_model::WordId) {
+        let buffer = self.render_word(id);
+        self.audition_buffer(buffer);
+    }
+
+    pub fn flash_clips(&mut self, clips: &[ClipId]) {
+        let now = Instant::now();
+        self.flash.extend(clips.iter().map(|c| (*c, now)));
+    }
+
+    /// Makes sure that clips just placed are on screen and noticed.
+    pub fn after_place(&mut self, clips: &[ClipId], track: TrackId) {
+        self.flash_clips(clips);
+        if let Some(start) = clips.first().and_then(|c| self.project.clip(*c)).map(|c| c.start) {
+            self.arr_view.follow(start);
+        }
+        if let Some(end) = clips.last().and_then(|c| self.project.clip(*c)).map(|c| c.end()) {
+            self.arr_view.follow(end);
+        }
+        let mut top = 0.0;
+        for t in &self.project.tracks {
+            if t.id == track {
+                let (height, visible) = (t.height, self.arr_lanes_rect.height());
+                if top < self.arr_scroll_y {
+                    self.arr_scroll_y = top;
+                } else if top + height > self.arr_scroll_y + visible {
+                    self.arr_scroll_y = top + height - visible;
+                }
+                break;
+            }
+            top += t.height + 1.0;
+        }
+    }
+
+    /// Every take that could replace a placed clip: the word or phrase it says, or the sound it is.
+    pub fn takes_of_label(&mut self, label: &str) -> Vec<Hit> {
+        if let Some((memo, takes)) = &self.takes_memo {
+            if memo == label {
+                return takes.clone();
+            }
+        }
+        let tokens: Vec<String> = label.split_whitespace().map(str::to_lowercase).collect();
+        let is_sound = !tokens.is_empty() && tokens.iter().all(|t| mp_analysis::g2p::ALL_PHONEMES.contains(&t.as_str()));
+        let mut takes = if tokens.len() > 1 { self.index.find_phrase(label) } else { self.index.takes_of(label) };
+        if takes.is_empty() && is_sound {
+            takes = self.index.find_phonemes(&tokens);
+        }
+        self.takes_memo = Some((label.to_string(), takes.clone()));
+        takes
+    }
+
+    pub fn takes_of_clip(&mut self, clip: &mp_model::Clip) -> Vec<Hit> {
+        match &clip.label {
+            Some(label) => {
+                let label = label.clone();
+                self.takes_of_label(&label)
+            }
+            None => Vec::new(),
+        }
+    }
+
+    /// Which of `takes` a clip is currently playing.
+    pub fn current_take(&self, clip: &mp_model::Clip, takes: &[Hit]) -> usize {
+        let distance = |h: &Hit| {
+            if h.source == clip.source.0 { (h.start - clip.src_in).abs() } else { f64::MAX }
+        };
+        takes.iter().enumerate().min_by(|a, b| distance(a.1).total_cmp(&distance(b.1))).map_or(0, |(i, _)| i)
     }
 
     /// Uses an earlier transcript of this file if there is one, preferring larger models.
@@ -405,10 +567,9 @@ impl App {
             .filter(|m| m.is_installed())
             .or_else(|| MODELS.iter().rev().find(|m| m.is_installed()));
         let Some(model) = model.copied() else {
-            self.browser.pending_transcribe.push(source);
-            self.browser.tab = crate::browser::BrowserTab::Words;
-            self.show_browser = true;
-            self.toast(ToastKind::Info, "Download a speech model to transcribe vocals");
+            self.say.pending_transcribe.push(source);
+            self.say.tab = SayTab::Say;
+            self.show_say = true;
             return;
         };
         let request = TranscribeRequest {
@@ -466,17 +627,22 @@ impl App {
         self.cache = Arc::new(RenderCache::new());
         self.jobs.switch_project();
         self.clipboard.clear();
+        self.word_drag = None;
+        self.word_dialog = None;
+        self.video.clear();
+        self.video_frame = None;
+        self.audition_source = None;
         self.gesture = None;
         self.clip_drag = None;
         self.marquee = None;
         self.hit_drag = None;
         self.snap_line = None;
-        self.renaming_track = None;
+        self.flash.clear();
+        self.takes_memo = None;
         self.tempo_toast = None;
         self.pitch_memo = None;
-        self.browser.results.clear();
-        self.browser.search_dirty = true;
-        self.browser.sentence_dirty = true;
+        self.say.plan.clear();
+        self.say.dirty = true;
         self.editor.range = None;
         self.editor.selected_word = None;
         self.editor.last_track = None;
@@ -623,7 +789,8 @@ impl App {
         if self.gesture.is_some() && !self.ctx.input(|i| i.pointer.any_down()) && !self.ctx.egui_wants_keyboard_input() {
             self.end_gesture();
         }
-        self.toasts.retain(|t| t.born.elapsed().as_secs_f32() < 3.5);
+        self.toasts.retain(|t| t.born.elapsed().as_secs_f32() < crate::ds::TOAST_SECONDS);
+        self.flash.retain(|_, born| born.elapsed().as_secs_f32() < crate::ds::MOTION_FLASH);
         if self.engine.is_playing() {
             self.playhead = self.engine.position() as f64 / self.sample_rate as f64;
         }
@@ -669,9 +836,9 @@ impl App {
                 JobEvent::Transcribed { source, transcript } => {
                     let n = transcript.words.len();
                     self.index.set_transcript(source.0, transcript);
-                    self.browser.search_dirty = true;
-                    self.browser.sentence_dirty = true;
-                    self.toast(ToastKind::Good, format!("Transcribed {n} words"));
+                    self.say.dirty = true;
+                    self.takes_memo = None;
+                    self.toast(ToastKind::Good, format!("Found {n} word{}", if n == 1 { "" } else { "s" }));
                 }
                 JobEvent::TranscribeFailed { error } => {
                     if error != "cancelled" {
@@ -679,10 +846,20 @@ impl App {
                     }
                 }
                 JobEvent::Spectrogram { source, spectrogram } => self.on_spectrogram(source, spectrogram),
+                JobEvent::VideoReady { source, proxy } => {
+                    self.video.insert(source, proxy);
+                    self.video_frame = None;
+                }
+                JobEvent::NoVideo { source } => {
+                    if let Some(s) = self.project.sources.iter_mut().find(|s| s.id == source) {
+                        s.has_video = false;
+                    }
+                    self.saved_state.sources.iter_mut().filter(|s| s.id == source).for_each(|s| s.has_video = false);
+                }
                 JobEvent::ModelReady(model) => {
                     self.toast(ToastKind::Good, format!("{} model ready", model.label));
                     self.selected_model = MODELS.iter().position(|m| m.id == model.id).unwrap_or(0);
-                    for source in std::mem::take(&mut self.browser.pending_transcribe) {
+                    for source in std::mem::take(&mut self.say.pending_transcribe) {
                         self.request_transcribe(source, false);
                     }
                 }
@@ -693,10 +870,8 @@ impl App {
                 }
                 JobEvent::Exported { path, seconds } => {
                     let size = std::fs::metadata(&path).map_or(0, |m| m.len());
-                    self.toast(
-                        ToastKind::Good,
-                        format!("Rendered {} ({:.0} s, {:.1} MB)", file_stem(&path), seconds, size as f64 / 1e6),
-                    );
+                    let text = format!("Rendered {} ({:.0} s, {:.1} MB)", file_stem(&path), seconds, size as f64 / 1e6);
+                    self.toast_with(ToastKind::Good, text, ToastAction::Reveal(path));
                 }
                 JobEvent::ExportFailed { error } => self.toast(ToastKind::Bad, format!("Render failed: {error}")),
             }
@@ -707,18 +882,29 @@ impl App {
         let crate::jobs::Imported { path, audio, mono, peaks, tempo, key, existing } = imported;
         let duration = audio.frames() as f64 / self.sample_rate as f64;
         let name = file_stem(&path);
-        let kind = TrackKind::from_filename(&name);
+        let is_video = mp_analysis::video::is_video_path(&path);
+        // Unless its name says otherwise, a video is people talking, so it should get transcribed.
+        let kind = match TrackKind::from_filename(&name) {
+            TrackKind::Music if is_video => TrackKind::Vocal,
+            kind => kind,
+        };
         let was_empty = self.project.tracks.is_empty();
 
         let source = match existing {
             Some(id) => id,
             None => self.edit(&format!("Import {name}"), |p| {
                 let source = p.add_source(path.clone(), name.clone(), duration, kind);
+                if let Some(s) = p.sources.iter_mut().find(|s| s.id == source) {
+                    s.has_video = is_video;
+                }
                 let track = p.add_track(name.clone(), kind);
                 p.add_clip(track, source, 0.0, 0.0, duration);
                 source
             }),
         };
+        if is_video && mp_model::video::ffmpeg_path().is_some() {
+            self.jobs.video_proxy(source, path.clone());
+        }
         self.bank.buffers.insert(source, audio);
         self.runtime.insert(source, SourceRuntime { peaks, mono });
         self.needs_compile = true;
@@ -759,8 +945,7 @@ impl App {
         } else if existing.is_some() {
             self.load_cached_transcript(source);
         }
-        self.browser.search_dirty = true;
-        self.browser.sentence_dirty = true;
+        self.say.dirty = true;
     }
 
     /// Pitch of the audio a clip plays, in Hz, remembered for the most recent clip.
@@ -807,27 +992,13 @@ impl App {
             let mut pixels = Vec::with_capacity(w * rows);
             for row in 0..rows {
                 let line = &spectrogram.data[row * spectrogram.columns + start..row * spectrogram.columns + start + w];
-                pixels.extend(line.iter().map(|v| spectrogram_color(*v)));
+                pixels.extend(line.iter().map(|v| crate::ds::spectrogram_color(*v as f32 / 255.0)));
             }
             let image = egui::ColorImage { size: [w, rows], source_size: egui::vec2(w as f32, rows as f32), pixels };
             tiles.push(self.ctx.load_texture(format!("spec-{}-{i}", source.0), image, egui::TextureOptions::LINEAR));
         }
         self.spectrograms.insert(source, SpectrogramState::Ready { spectrogram, tiles });
     }
-}
-
-/// Dark-to-warm colour map that keeps quiet detail visible.
-fn spectrogram_color(v: u8) -> egui::Color32 {
-    let t = v as f32 / 255.0;
-    let t = t * t;
-    let (r, g, b) = if t < 0.5 {
-        let u = t * 2.0;
-        (20.0 + 110.0 * u, 18.0 + 25.0 * u, 34.0 + 70.0 * u)
-    } else {
-        let u = (t - 0.5) * 2.0;
-        (130.0 + 125.0 * u, 43.0 + 180.0 * u, 104.0 + 20.0 * u)
-    };
-    egui::Color32::from_rgb(r as u8, g as u8, b as u8)
 }
 
 fn write_project(project: &Project, path: &Path) -> Result<(), String> {

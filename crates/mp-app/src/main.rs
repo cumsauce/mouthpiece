@@ -1,24 +1,40 @@
 //! Mouthpiece: a sentence-mixing DAW.
 
+// The test script's state dump is one large JSON literal.
+#![recursion_limit = "256"]
+
 mod actions;
 mod app;
-mod arranger;
-mod browser;
-mod devices_ui;
-mod editor;
-mod export_ui;
-mod inspector;
+mod ds;
 mod jobs;
-mod lane;
-mod mixer;
+mod panels;
 mod script;
 mod shell;
-mod theme;
-mod timeline;
-mod waveform;
-mod widgets;
 
 use eframe::egui;
+
+/// Shows the design system's components instead of the app, for working on them.
+struct Gallery {
+    state: ds::gallery::GalleryState,
+    frames: u32,
+}
+
+impl eframe::App for Gallery {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        ds::gallery::show(ui, &mut self.state);
+        // MOUTHPIECE_GALLERY=out.png saves a screenshot and quits, to check changes without a person.
+        self.frames += 1;
+        ui.ctx().request_repaint();
+        let target = std::env::var("MOUTHPIECE_GALLERY").unwrap_or_default();
+        if target.ends_with(".png") && self.frames == 10 {
+            let ctx = ui.ctx().clone();
+            ui.ctx().request_screenshot(move |image| {
+                script::save_png(&target, &image);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            });
+        }
+    }
+}
 
 fn main() -> eframe::Result {
     let args: Vec<std::path::PathBuf> = std::env::args_os().skip(1).map(Into::into).collect();
@@ -26,7 +42,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Mouthpiece")
             .with_inner_size([1480.0, 900.0])
-            .with_min_inner_size([960.0, 600.0])
+            .with_min_inner_size([1040.0, 640.0])
             .with_drag_and_drop(true),
         ..Default::default()
     };
@@ -34,7 +50,10 @@ fn main() -> eframe::Result {
         "Mouthpiece",
         options,
         Box::new(move |cc| {
-            theme::install(&cc.egui_ctx);
+            ds::install(&cc.egui_ctx);
+            if std::env::var_os("MOUTHPIECE_GALLERY").is_some() {
+                return Ok(Box::new(Gallery { state: Default::default(), frames: 0 }) as Box<dyn eframe::App>);
+            }
             Ok(Box::new(app::App::new(cc.egui_ctx.clone(), args)))
         }),
     )

@@ -1,5 +1,7 @@
 //! Renders a project to an audio file, through the same engine code as playback.
 
+pub mod video;
+
 use mp_engine::graph::EngineGraph;
 use mp_engine::render_offline;
 use mp3lame_encoder::{Bitrate, Builder, DualPcm, FlushNoGap, Id3Tag, Quality};
@@ -13,12 +15,15 @@ pub enum Format {
     Wav16,
     Wav24,
     WavFloat,
+    /// Video of the given height in pixels, cut by the arrangement. See `video.rs`.
+    Mp4 { height: u32 },
 }
 
 impl Format {
     pub fn extension(&self) -> &'static str {
         match self {
             Format::Mp3 { .. } => "mp3",
+            Format::Mp4 { .. } => "mp4",
             _ => "wav",
         }
     }

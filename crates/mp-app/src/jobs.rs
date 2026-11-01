@@ -6,10 +6,12 @@ use mp_analysis::peaks::Peaks;
 use mp_analysis::spectrogram::Spectrogram;
 use mp_analysis::tempo::TempoResult;
 use mp_analysis::transcribe::{self, TranscribeRequest, WhisperModel};
+use mp_analysis::video::{self, VideoProxy};
 use mp_analysis::{decode, key, tempo, Transcript};
 use mp_dsp::Stereo;
 use mp_engine::{GraphCompiler, RenderCache, SourceBank};
-use mp_export::ExportSettings;
+use mp_export::video::VideoSettings;
+use mp_export::{ExportSettings, Format};
 use mp_model::{Project, SourceId};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +36,8 @@ pub enum JobEvent {
     Transcribed { source: SourceId, transcript: Transcript },
     TranscribeFailed { error: String },
     Spectrogram { source: SourceId, spectrogram: Arc<Spectrogram> },
+    VideoReady { source: SourceId, proxy: Arc<VideoProxy> },
+    NoVideo { source: SourceId },
     ModelReady(WhisperModel),
     DownloadFailed { error: String },
     Exported { path: PathBuf, seconds: f64 },
@@ -174,6 +178,18 @@ impl Jobs {
         });
     }
 
+    pub fn video_proxy(&mut self, source: SourceId, path: PathBuf) {
+        let (job, _) = self.register(format!("Preparing video for {}", file_stem(&path)), false);
+        let reporter = self.reporter(self.project);
+        std::thread::spawn(move || {
+            reporter.send(match video::extract_proxy(&path) {
+                Ok(proxy) => JobEvent::VideoReady { source, proxy: Arc::new(proxy) },
+                Err(_) => JobEvent::NoVideo { source },
+            });
+            reporter.send(JobEvent::Done { job });
+        });
+    }
+
     pub fn download_model(&mut self, model: WhisperModel) {
         let (job, cancel) = self.register(format!("Downloading {} model", model.label), true);
         let reporter = self.reporter(ANY_PROJECT);
@@ -212,13 +228,17 @@ impl Jobs {
             let seconds = settings.end.saturating_sub(settings.start) as f64 / sample_rate as f64;
             let progress = reporter.clone();
             let mut last = 0.0;
-            let result = mp_export::export(graph, sample_rate, &settings, &path, |p| {
+            let report = |p: f32| {
                 if p - last >= 0.01 {
                     last = p;
                     progress.send(JobEvent::Progress { job, fraction: p });
                 }
                 !cancel.load(Ordering::Relaxed)
-            });
+            };
+            let result = match settings.format {
+                Format::Mp4 { height } => export_video(graph, &project, sample_rate, &settings, height, &path, report),
+                _ => mp_export::export(graph, sample_rate, &settings, &path, report),
+            };
             match result {
                 Ok(true) => reporter.send(JobEvent::Exported { path, seconds }),
                 Ok(false) => {}
@@ -237,6 +257,34 @@ impl Jobs {
     pub fn finish(&mut self, job: u64) {
         self.active.retain(|j| j.id != job);
     }
+}
+
+/// Renders the mix first, so that the video gets exactly what playback sounds like, then the picture.
+fn export_video(
+    graph: Box<mp_engine::EngineGraph>,
+    project: &Project,
+    sample_rate: u32,
+    settings: &ExportSettings,
+    height: u32,
+    path: &std::path::Path,
+    mut report: impl FnMut(f32) -> bool,
+) -> Result<bool, String> {
+    let audio = std::env::temp_dir().join(format!("mouthpiece-mix-{}.wav", std::process::id()));
+    let mix = ExportSettings { format: Format::Wav24, ..settings.clone() };
+    let result = (|| {
+        if !mp_export::export(graph, sample_rate, &mix, &audio, |p| report(p * 0.2))? {
+            return Ok(false);
+        }
+        const FPS: u32 = 30;
+        let (a, b) = (settings.start as f64 / sample_rate as f64, settings.end as f64 / sample_rate as f64);
+        let segments = project.video_edit_list(a, b, FPS);
+        let sources = project.sources.iter().map(|s| (s.id, s.path.clone())).collect();
+        let width = height * 16 / 9;
+        let video = VideoSettings { width: width + width % 2, height, fps: FPS };
+        mp_export::video::export_video(&segments, &sources, &audio, &video, path, |p| report(0.2 + p * 0.8))
+    })();
+    let _ = std::fs::remove_file(&audio);
+    result
 }
 
 fn run_transcribe(job: TranscribeJob) {

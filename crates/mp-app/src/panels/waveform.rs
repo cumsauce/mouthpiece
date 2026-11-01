@@ -1,6 +1,6 @@
 //! Fast waveform drawing, as a single mesh of per-column quads.
 
-use crate::theme::*;
+use crate::ds::*;
 use eframe::egui::{self, epaint::Vertex, Color32, Mesh, Painter, Rect, Shape};
 use mp_analysis::peaks::Peaks;
 use mp_model::Clip;

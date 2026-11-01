@@ -228,6 +228,19 @@ impl WordIndex {
         hits
     }
 
+    /// Like `find_phrase`, but only runs of words said without a pause. A clip that goes silent in the
+    /// middle of a typed line isn't what anyone wants, so those are better as separate words.
+    pub fn find_connected_phrase(&self, q: &str) -> Vec<Hit> {
+        const LONGEST_GAP: f64 = 0.15;
+        let mut hits = self.find_phrase(q);
+        let length = q.split_whitespace().count();
+        hits.retain(|h| {
+            let words = &self.transcripts[&h.source].words;
+            words[h.word_index..h.word_index + length].windows(2).all(|w| w[1].start - w[0].end <= LONGEST_GAP)
+        });
+        hits
+    }
+
     /// A phoneme sequence anywhere, inside a word.
     pub fn find_phonemes(&self, symbols: &[String]) -> Vec<Hit> {
         let mut hits = Vec::new();

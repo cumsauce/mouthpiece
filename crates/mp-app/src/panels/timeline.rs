@@ -1,6 +1,6 @@
 //! Mapping between arrangement time and screen position, plus ruler and grid drawing.
 
-use crate::theme::*;
+use crate::ds::*;
 use eframe::egui::{self, Align2, Painter, Rect, Stroke};
 use mp_model::Project;
 
@@ -85,18 +85,18 @@ pub fn draw_grid(painter: &Painter, rect: Rect, project: &Project, view: &TimeVi
         let is_bar = (beats / bar).fract().abs() < 1e-9;
         let is_beat = beats.fract().abs() < 1e-9;
         let color = if is_bar {
-            alpha(BG_4, 170)
+            alpha(CONTROL_HOVER, 110)
         } else if is_beat {
-            alpha(BG_4, 90)
+            alpha(CONTROL_HOVER, 50)
         } else {
-            alpha(BG_4, 45)
+            alpha(CONTROL_HOVER, 24)
         };
         painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())], Stroke::new(1.0, color));
     }
 }
 
 pub fn draw_ruler(painter: &Painter, rect: Rect, project: &Project, view: &TimeView) {
-    painter.rect_filled(rect, 0.0, BG_2);
+    painter.rect_filled(rect, 0.0, RAISED);
     let label_step = adaptive_step(project, view, 56.0);
     let beat = project.beat_seconds();
     let bar = project.beats_per_bar as f64;
@@ -114,7 +114,7 @@ pub fn draw_ruler(painter: &Painter, rect: Rect, project: &Project, view: &TimeV
         let is_bar = sub.abs() < 1e-9;
         painter.line_segment(
             [egui::pos2(x, rect.bottom() - if is_bar { 9.0 } else { 5.0 }), egui::pos2(x, rect.bottom())],
-            Stroke::new(1.0, if is_bar { TEXT_FAINT } else { BG_4 }),
+            Stroke::new(1.0, if is_bar { TEXT_3 } else { CONTROL_HOVER }),
         );
         // Past sixteenths, musical labels would repeat, so zoomed this far in shows clock time.
         let label = if label_step < 0.25 {
@@ -133,11 +133,11 @@ pub fn draw_ruler(painter: &Painter, rect: Rect, project: &Project, view: &TimeV
             egui::pos2(x + 4.0, rect.top() + 3.0),
             Align2::LEFT_TOP,
             label,
-            mono(10.0),
-            if is_bar { TEXT_DIM } else { TEXT_FAINT },
+            font_num(10.0),
+            if is_bar { TEXT_2 } else { TEXT_3 },
         );
     }
-    painter.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, LINE));
+    painter.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, DIVIDER));
 }
 
 pub fn format_time(seconds: f64) -> String {

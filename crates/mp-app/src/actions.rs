@@ -36,7 +36,15 @@ pub enum Action {
     PitchDown,
     Faster,
     Slower,
-    ResetStretch,
+    RestoreOriginal,
+    RevertWord,
+    Group,
+    Ungroup,
+    Crossfade,
+    SaveWord,
+    FineNudgeLeft,
+    FineNudgeRight,
+    ToggleVideo,
     Varispeed,
     FitToTempo,
     NudgeLeft,
@@ -51,9 +59,14 @@ pub enum Action {
     ShowDevices,
     ShowMixer,
     ToggleInspector,
-    ToggleBrowser,
-    FocusSearch,
-    SentenceBuilder,
+    ToggleSay,
+    FocusSay,
+    NextTake,
+    PrevTake,
+    Repeat,
+    SoloTrack,
+    PlayFromSelection,
+    Deselect,
     Palette,
     Shortcuts,
     AddVocalTrack,
@@ -78,12 +91,15 @@ const fn key(m: Modifiers, k: Key) -> Option<KeyboardShortcut> {
 const NONE: Modifiers = Modifiers::NONE;
 const CMD: Modifiers = Modifiers::COMMAND;
 const SHIFT: Modifiers = Modifiers::SHIFT;
+const ALT: Modifiers = Modifiers::ALT;
 const CMD_SHIFT: Modifiers = Modifiers { command: true, shift: true, ..Modifiers::NONE };
 
 /// (action, palette name, shortcut, group)
 pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::PlayPause, "Play / Pause", key(NONE, Key::Space), "Transport"),
+    (Action::PlayFromSelection, "Play from the selection", key(SHIFT, Key::Space), "Transport"),
     (Action::Stop, "Stop and return", key(NONE, Key::Enter), "Transport"),
+    (Action::SoloTrack, "Solo the selection's track", key(SHIFT, Key::S), "Transport"),
     (Action::ToggleLoop, "Toggle loop", key(NONE, Key::L), "Transport"),
     (Action::LoopSelection, "Loop selected clips", key(SHIFT, Key::L), "Transport"),
     (Action::ToggleMetronome, "Toggle metronome", key(NONE, Key::K), "Transport"),
@@ -91,28 +107,38 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::Redo, "Redo", key(CMD_SHIFT, Key::Z), "Edit"),
     (Action::Split, "Split at playhead", key(NONE, Key::S), "Edit"),
     (Action::Delete, "Delete selection", key(NONE, Key::Backspace), "Edit"),
+    (Action::Deselect, "Deselect", key(NONE, Key::Escape), "Edit"),
     (Action::Duplicate, "Duplicate selection", key(CMD, Key::D), "Edit"),
     (Action::Copy, "Copy clips", key(CMD, Key::C), "Edit"),
     (Action::Paste, "Paste clips at playhead", key(CMD, Key::V), "Edit"),
     (Action::SelectAll, "Select all clips", key(CMD, Key::A), "Edit"),
     (Action::NudgeLeft, "Nudge left", key(NONE, Key::ArrowLeft), "Edit"),
     (Action::NudgeRight, "Nudge right", key(NONE, Key::ArrowRight), "Edit"),
+    (Action::FineNudgeLeft, "Nudge left 5 ms", key(ALT, Key::ArrowLeft), "Edit"),
+    (Action::FineNudgeRight, "Nudge right 5 ms", key(ALT, Key::ArrowRight), "Edit"),
     (Action::Reverse, "Reverse clip", key(NONE, Key::R), "Clip"),
     (Action::MuteClip, "Mute clip", key(NONE, Key::M), "Clip"),
     (Action::PitchUp, "Pitch up a semitone", key(NONE, Key::ArrowUp), "Clip"),
     (Action::PitchDown, "Pitch down a semitone", key(NONE, Key::ArrowDown), "Clip"),
     (Action::Faster, "Speed up 10%", key(NONE, Key::OpenBracket), "Clip"),
     (Action::Slower, "Slow down 10%", key(NONE, Key::CloseBracket), "Clip"),
-    (Action::ResetStretch, "Reset stretch and pitch", key(SHIFT, Key::R), "Clip"),
+    (Action::RestoreOriginal, "Restore the clip to how it was first placed", key(SHIFT, Key::R), "Clip"),
+    (Action::RevertWord, "Revert to the saved word", None, "Clip"),
     (Action::Varispeed, "Toggle varispeed (tape) mode", key(NONE, Key::V), "Clip"),
     (Action::FitToTempo, "Fit clip to project tempo", None, "Clip"),
     (Action::Quantize, "Quantize to grid", key(NONE, Key::Q), "Sentence mixing"),
     (Action::CloseGaps, "Close gaps between clips", key(NONE, Key::G), "Sentence mixing"),
     (Action::SliceToWords, "Slice clip to words", key(NONE, Key::W), "Sentence mixing"),
     (Action::SnapPitchToKey, "Snap pitch to key", key(NONE, Key::P), "Sentence mixing"),
-    (Action::PlaceRange, "Place editor selection on Sentence track", key(NONE, Key::E), "Sentence mixing"),
-    (Action::FocusSearch, "Search words", key(CMD, Key::F), "Sentence mixing"),
-    (Action::SentenceBuilder, "Open Sentence Builder", key(CMD, Key::B), "Sentence mixing"),
+    (Action::PlaceRange, "Place editor selection", key(NONE, Key::E), "Sentence mixing"),
+    (Action::FocusSay, "Say something", key(CMD, Key::F), "Sentence mixing"),
+    (Action::NextTake, "Next take", key(NONE, Key::T), "Sentence mixing"),
+    (Action::PrevTake, "Previous take", key(SHIFT, Key::T), "Sentence mixing"),
+    (Action::Repeat, "Repeat, to stutter", key(SHIFT, Key::D), "Sentence mixing"),
+    (Action::Crossfade, "Crossfade clips together", key(NONE, Key::X), "Sentence mixing"),
+    (Action::Group, "Group clips", key(CMD, Key::G), "Sentence mixing"),
+    (Action::Ungroup, "Ungroup clips", key(CMD_SHIFT, Key::G), "Sentence mixing"),
+    (Action::SaveWord, "Save as a word to use again", key(SHIFT, Key::W), "Sentence mixing"),
     (Action::Transcribe, "Transcribe track", key(CMD_SHIFT, Key::T), "Sentence mixing"),
     (Action::ZoomIn, "Zoom in", key(NONE, Key::Equals), "View"),
     (Action::ZoomOut, "Zoom out", key(NONE, Key::Minus), "View"),
@@ -124,7 +150,8 @@ pub const ACTIONS: &[(Action, &str, Option<KeyboardShortcut>, &str)] = &[
     (Action::ShowDevices, "Show devices", key(NONE, Key::Num2), "View"),
     (Action::ShowMixer, "Show mixer", key(NONE, Key::Num3), "View"),
     (Action::ToggleInspector, "Show / hide inspector", key(NONE, Key::I), "View"),
-    (Action::ToggleBrowser, "Show / hide word browser", key(NONE, Key::B), "View"),
+    (Action::ToggleVideo, "Show / hide the picture", key(SHIFT, Key::V), "View"),
+    (Action::ToggleSay, "Show / hide the Say panel", key(NONE, Key::B), "View"),
     (Action::Palette, "Command palette", key(CMD, Key::K), "View"),
     (Action::Shortcuts, "Keyboard shortcuts", key(NONE, Key::Questionmark), "View"),
     (Action::New, "New project", key(CMD, Key::N), "File"),
@@ -152,6 +179,9 @@ pub fn shortcut_text(shortcut: &KeyboardShortcut) -> String {
     if m.shift {
         s.push('⇧');
     }
+    if m.alt {
+        s.push('⌥');
+    }
     if m.command {
         s.push('⌘');
     }
@@ -160,6 +190,7 @@ pub fn shortcut_text(shortcut: &KeyboardShortcut) -> String {
         Key::Enter => "Return",
         Key::Backspace => "Delete",
         Key::Tab => "Tab",
+        Key::Escape => "Esc",
         Key::ArrowLeft => "←",
         Key::ArrowRight => "→",
         Key::ArrowUp => "↑",
@@ -175,7 +206,7 @@ pub fn shortcut_text(shortcut: &KeyboardShortcut) -> String {
         other => other.name(),
     };
     s.push_str(k);
-    crate::widgets::keys(&s)
+    crate::ds::keys(&s)
 }
 
 impl App {
@@ -188,6 +219,10 @@ impl App {
             let m = s.modifiers;
             std::cmp::Reverse(m.shift as u8 + m.command as u8 + m.alt as u8)
         });
+        // Slash goes to the input from anywhere. It's here since it's a second key for FocusSay.
+        if !typing && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Slash)) {
+            self.run(Action::FocusSay);
+        }
         // The windowing layer turns these two into clipboard events and sends no key press for them.
         // A text field that's being typed in takes them itself.
         if !typing {
@@ -273,10 +308,30 @@ impl App {
             Action::PitchDown => self.edit_selected("Pitch down", |c| c.pitch = (c.pitch - 1.0).max(-48.0)),
             Action::Faster => self.scale_selected_stretch("Speed up", 1.0 / 1.1),
             Action::Slower => self.scale_selected_stretch("Slow down", 1.1),
-            Action::ResetStretch => self.edit_selected("Reset stretch and pitch", |c| {
-                c.stretch = 1.0;
-                c.pitch = 0.0;
-            }),
+            Action::RestoreOriginal => {
+                let ids = self.selection.clone();
+                self.edit("Restore original", |p| ids.iter().for_each(|i| p.restore_original(*i)));
+            }
+            Action::RevertWord => self.revert_selected_word(),
+            Action::Group => {
+                let ids = self.selection.clone();
+                if ids.len() < 2 {
+                    self.toast(ToastKind::Info, "Select two or more clips to group");
+                } else {
+                    self.edit("Group", |p| {
+                        p.group_clips(&ids, None);
+                    });
+                }
+            }
+            Action::Ungroup => {
+                let ids = self.selection.clone();
+                self.edit("Ungroup", |p| p.ungroup_clips(&ids));
+            }
+            Action::Crossfade => self.crossfade_selection(),
+            Action::SaveWord => self.open_save_word(),
+            Action::FineNudgeLeft => self.nudge_by(-0.005),
+            Action::FineNudgeRight => self.nudge_by(0.005),
+            Action::ToggleVideo => self.show_video = !self.show_video,
             Action::Varispeed => self.edit_selected("Change stretch mode", |c| {
                 c.mode = if c.mode == ClipMode::Elastic { ClipMode::Varispeed } else { ClipMode::Elastic };
             }),
@@ -306,12 +361,20 @@ impl App {
             Action::ShowDevices => self.show_tab(BottomTab::Devices),
             Action::ShowMixer => self.show_tab(BottomTab::Mixer),
             Action::ToggleInspector => self.show_inspector = !self.show_inspector,
-            Action::ToggleBrowser => self.show_browser = !self.show_browser,
-            Action::FocusSearch => self.focus_search(),
-            Action::SentenceBuilder => {
-                self.show_browser = true;
-                self.browser.tab = crate::browser::BrowserTab::Sentence;
-                self.browser.focus_sentence = true;
+            Action::ToggleSay => self.show_say = !self.show_say,
+            Action::FocusSay => {
+                self.show_say = true;
+                self.say.tab = crate::panels::say::SayTab::Say;
+                self.say.focus_input = true;
+            }
+            Action::NextTake => self.step_selected_take(1),
+            Action::PrevTake => self.step_selected_take(-1),
+            Action::Repeat => self.duplicate_selection(),
+            Action::SoloTrack => self.solo_selection_track(),
+            Action::PlayFromSelection => self.play_from_selection(),
+            Action::Deselect => {
+                self.selection.clear();
+                self.editor.range = None;
             }
             Action::Palette => {
                 self.palette_open = !self.palette_open;
@@ -354,10 +417,55 @@ impl App {
         self.bottom_tab = tab;
     }
 
-    fn focus_search(&mut self) {
-        self.show_browser = true;
-        self.browser.tab = crate::browser::BrowserTab::Words;
-        self.browser.focus_search = true;
+    /// Swaps selected clips to another take of the same word. They stay where they are, so this is
+    /// how you try takes once a line is on the timeline.
+    fn step_selected_take(&mut self, delta: i32) {
+        let mut swaps = Vec::new();
+        for id in self.selection.clone() {
+            let Some(clip) = self.project.clip(id).cloned() else { continue };
+            let takes = self.takes_of_clip(&clip);
+            if takes.len() < 2 {
+                continue;
+            }
+            let next = (self.current_take(&clip, &takes) as i32 + delta).rem_euclid(takes.len() as i32) as usize;
+            swaps.push((id, takes[next].clone()));
+        }
+        if swaps.is_empty() {
+            self.toast(ToastKind::Info, "This has no other takes");
+            return;
+        }
+        let audition = swaps[0].1.clone();
+        self.edit("Change take", |p| {
+            for (id, hit) in &swaps {
+                if let Some((a, b)) = App::padded_range(p, hit) {
+                    p.swap_clip_audio(*id, mp_model::SourceId(hit.source), a, b);
+                }
+            }
+        });
+        self.flash_clips(&swaps.iter().map(|s| s.0).collect::<Vec<_>>());
+        self.audition_hit(&audition);
+    }
+
+    fn solo_selection_track(&mut self) {
+        let track = self.selection.first().and_then(|c| self.project.track_of_clip(*c)).or(self.selected_track);
+        let Some(track) = track else {
+            self.toast(ToastKind::Info, "Select a clip or track first");
+            return;
+        };
+        self.edit("Solo track", |p| {
+            if let Some(t) = p.track_mut(track) {
+                t.solo = !t.solo;
+            }
+        });
+    }
+
+    fn play_from_selection(&mut self) {
+        if let Some((a, _)) = self.selection_span() {
+            self.seek(a);
+        }
+        self.play_start = self.playhead;
+        self.engine.audition(None);
+        self.engine.play();
     }
 
     pub fn add_device(&mut self, kind: DeviceKind) {
@@ -437,17 +545,10 @@ impl App {
     }
 
     /// Duplicates selected clips directly after the selection's end.
-    fn duplicate_selection(&mut self) {
+    pub fn duplicate_selection(&mut self) {
         let Some((a, b)) = self.selection_span() else { return };
         let ids = self.selection.clone();
-        let copies = self.edit("Duplicate", |p| {
-            ids.iter()
-                .filter_map(|id| {
-                    let start = p.clip(*id)?.start + (b - a);
-                    p.duplicate_clip(*id, start)
-                })
-                .collect::<Vec<_>>()
-        });
+        let copies = self.edit("Duplicate", |p| p.duplicate_clips(&ids, b - a));
         self.selection = copies;
     }
 
@@ -476,11 +577,15 @@ impl App {
         let (pasted, end) = self.edit("Paste", |p| {
             let mut out = Vec::new();
             let mut end = at;
+            let mut groups = std::collections::HashMap::new();
             for (clip, track) in &items {
                 let id = mp_model::ClipId(p.alloc_id());
                 let mut copy = clip.clone();
                 copy.id = id;
                 copy.start = at + clip.start - first;
+                if let Some(group) = clip.group {
+                    copy.group = Some(*groups.entry(group).or_insert_with(|| mp_model::GroupId(p.alloc_id())));
+                }
                 end = end.max(copy.end());
                 let target = if p.track(*track).is_some() { Some(*track) } else { p.tracks.first().map(|t| t.id) };
                 if let Some(t) = target.and_then(|t| p.track_mut(t)) {
@@ -497,18 +602,60 @@ impl App {
     /// Moves clips by a grid step, or by a millisecond-scale step with snapping off.
     fn nudge(&mut self, direction: f64) {
         let step = if self.snap { self.grid_or_small_step() } else { 0.005 };
+        self.nudge_by(direction * step);
+    }
+
+    fn nudge_by(&mut self, step: f64) {
         if self.selection.is_empty() {
-            self.seek(self.playhead + direction * step);
+            self.seek(self.playhead + step);
             return;
         }
         let ids = self.selection.clone();
         self.edit("Nudge", |p| {
             for id in ids {
                 if let Some(c) = p.clip_mut(id) {
-                    c.start = (c.start + direction * step).max(0.0);
+                    c.start = (c.start + step).max(0.0);
                 }
             }
+            p.update_auto_crossfades();
         });
+    }
+
+    /// Blends selected clips into each other. Dragging them afterwards changes how long the blend is.
+    fn crossfade_selection(&mut self) {
+        const OVERLAP: f64 = 0.02;
+        if self.selection.len() < 2 {
+            self.toast(ToastKind::Info, "Select two or more clips to crossfade");
+            return;
+        }
+        let ids = self.selection.clone();
+        self.edit("Crossfade", |p| p.crossfade_clips(&ids, OVERLAP));
+    }
+
+    /// Opens the dialog that names the selection as a word, suggesting a name from what it spells.
+    fn open_save_word(&mut self) {
+        if self.selection.is_empty() {
+            self.toast(ToastKind::Info, "Select the clips that make up the word first");
+            return;
+        }
+        let clips = self.selection.clone();
+        let first = clips.first().and_then(|c| self.project.clip(*c));
+        let name = first.and_then(|c| c.word_name.clone()).unwrap_or_else(|| {
+            let labels: Vec<String> = clips.iter().filter_map(|c| self.project.clip(*c)).filter_map(|c| c.label.clone()).collect();
+            labels.join(" ")
+        });
+        self.word_dialog = Some(crate::app::WordDialog { name, clips, renaming: None, focused: false });
+    }
+
+    fn revert_selected_word(&mut self) {
+        let Some(first) = self.selection.first().copied() else { return };
+        if self.project.clip(first).is_none_or(|c| c.made_word.is_none()) {
+            self.toast(ToastKind::Info, "This isn't a saved word");
+            return;
+        }
+        let placed = self.edit("Revert to saved", |p| p.revert_to_saved(first));
+        self.flash_clips(&placed);
+        self.selection = placed;
     }
 
     fn fit_selection_to_tempo(&mut self) {
@@ -584,7 +731,7 @@ impl App {
         });
         let target = key.map_or("the nearest note".to_string(), |k| k.label());
         let note = if unpitched > 0 { format!(" ({unpitched} had no clear pitch)") } else { String::new() };
-        self.toast(ToastKind::Good, format!("Tuned {tuned} clip(s) to {target}{note}"));
+        self.toast(ToastKind::Good, format!("Tuned {tuned} clip{} to {target}{note}", if tuned == 1 { "" } else { "s" }));
     }
 
     fn transcribe_selected(&mut self) {
@@ -604,7 +751,7 @@ impl App {
     }
 
     fn open_export_dialog(&mut self) {
-        self.export_dialog = Some(crate::export_ui::ExportDialog::new(&self.project));
+        self.export_dialog = Some(crate::panels::render::ExportDialog::new(&self.project));
     }
 
     /// Runs an action by its debug name, for the test script.
@@ -622,6 +769,17 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_two_commands_share_a_shortcut() {
+        let mut seen = std::collections::HashSet::new();
+        for (action, _, shortcut, _) in ACTIONS {
+            if let Some(s) = shortcut {
+                let key = (s.logical_key, s.modifiers.shift, s.modifiers.command, s.modifiers.alt);
+                assert!(seen.insert(key), "{action:?} reuses a shortcut");
+            }
+        }
+    }
 
     #[test]
     fn command_shortcuts_fire_on_mac_and_elsewhere() {
