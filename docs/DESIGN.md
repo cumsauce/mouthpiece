@@ -95,6 +95,18 @@ surface floats over another, because lines between everything add noise.
 **Meaning never rests on colour alone.** Pair it with text or shape: a stitched word has a coloured
 underline and a sentence saying so.
 
+**How the palette is built.** Colours are chosen in OKLCH, where equal numbers look equal, and tests in
+`tokens.rs` hold them to these rules, so change a colour by its OKLCH value and rerun them:
+
+- **Surfaces** share one cool hue, 262, opposite the accent's 41, at a chroma too low to read as a colour.
+  Their lightness rises in even steps.
+- **Tracks** are close in lightness and chroma, so that none shouts over another, and leave the hues around the
+  accent free, so that a track is never mistaken for the selection. They stay apart under simulated
+  deuteranopia and protanopia, which is why their lightness differs a little.
+- **The spectrogram** rises evenly in lightness with level, like magma and inferno, and never falls, so that
+  brightness can be read as loudness. A rainbow would show edges that aren't in the sound.
+- **Blends** go through `mix`, in OKLab, so that tints of a track colour stay clean.
+
 ### Type
 
 | Function | Size | Use |

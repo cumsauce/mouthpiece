@@ -55,6 +55,26 @@ case "$os" in
   <key>CFBundleVersion</key><string>$version</string>
   <key>LSMinimumSystemVersion</key><string>$MACOSX_DEPLOYMENT_TARGET</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Mouthpiece Project</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSTypeIsPackage</key><true/>
+      <key>LSItemContentTypes</key><array><string>app.mouthpiece.project</string></array>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>app.mouthpiece.project</string>
+      <key>UTTypeDescription</key><string>Mouthpiece Project</string>
+      <key>UTTypeConformsTo</key><array><string>com.apple.package</string><string>public.composite-content</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>mouthpiece</string></array></dict>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

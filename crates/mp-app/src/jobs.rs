@@ -55,6 +55,7 @@ pub enum JobEvent {
     SongFailed { error: String },
     ToolsFailed { error: String },
     FfmpegReady,
+    MediaCollected { package: PathBuf, moves: Vec<(PathBuf, PathBuf)>, error: Option<String> },
     StemsInstalled,
     StemsReady { source: SourceId, files: BTreeMap<String, PathBuf> },
     /// `source` is none if it was the install that failed.
@@ -213,6 +214,16 @@ impl Jobs {
     }
 
     /// Fetches ffmpeg on its own, for showing and rendering video.
+    pub fn collect_media(&mut self, paths: Vec<PathBuf>, package: PathBuf) {
+        let (job, _) = self.register("Copying samples into the project".to_string(), false);
+        let reporter = self.reporter(ANY_PROJECT);
+        std::thread::spawn(move || {
+            let (moves, error) = mp_model::file::collect_media(&paths, &package, &mut |fraction| reporter.send(JobEvent::Progress { job, fraction }));
+            reporter.send(JobEvent::MediaCollected { package, moves, error });
+            reporter.send(JobEvent::Done { job });
+        });
+    }
+
     pub fn get_ffmpeg(&mut self) {
         let (job, cancel) = self.register("Downloading ffmpeg".to_string(), true);
         let reporter = self.reporter(ANY_PROJECT);

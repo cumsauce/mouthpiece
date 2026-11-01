@@ -645,7 +645,12 @@ impl App {
 
     fn empty_state(&mut self, ui: &mut Ui, area: Rect) {
         let text = "A whole song gets split for you. Words, tempo and key are found by themselves.";
-        let (choose, find) = hero_state(ui, area, "Drop a song or its stems here", text, "Choose files…", "Find a song online…");
+        let recent = self.recent_projects();
+        let items: Vec<RecentItem> = recent.iter().map(|r| r.1.clone()).collect();
+        let (choose, find, picked) = hero_state(ui, area, "Drop a song or its stems here", text, "Choose files…", "Find a song online…", &items);
+        if let Some((path, _)) = picked.and_then(|i| recent.into_iter().nth(i)) {
+            self.after_discard(crate::app::AfterDiscard::OpenPath(path));
+        }
         if choose.clicked() {
             self.import_dialog();
         }

@@ -22,6 +22,9 @@ impl eframe::App for App {
         self.frame_start();
         crate::script::tick(self, &ctx);
         self.handle_drops(&ctx);
+        for path in crate::open_files::take() {
+            self.after_discard(AfterDiscard::OpenPath(path));
+        }
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.is_dirty() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending_discard = Some(AfterDiscard::Quit);

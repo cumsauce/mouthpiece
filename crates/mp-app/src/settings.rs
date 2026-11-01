@@ -13,6 +13,7 @@ pub struct Settings {
     pub stems: StemSettings,
     pub download_dir: Option<PathBuf>,
     pub download_kind: mp_analysis::online::DownloadKind,
+    pub recent_projects: Vec<PathBuf>,
 }
 
 fn path() -> PathBuf {

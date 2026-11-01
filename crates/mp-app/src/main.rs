@@ -11,6 +11,7 @@ mod app;
 mod chrome;
 mod ds;
 mod jobs;
+mod open_files;
 mod panels;
 mod script;
 mod settings;
@@ -42,6 +43,7 @@ impl eframe::App for Gallery {
 }
 
 fn main() -> eframe::Result {
+    open_files::listen();
     let args: Vec<std::path::PathBuf> = std::env::args_os().skip(1).map(Into::into).collect();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

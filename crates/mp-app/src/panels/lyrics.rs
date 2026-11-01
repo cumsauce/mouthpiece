@@ -111,6 +111,7 @@ impl App {
             }
         }
         self.index.set_transcript(source.0, transcript);
+        self.save_packaged_transcript(source);
         self.say.word_selection = None;
         self.say.dirty = true;
         self.takes_memo = None;

@@ -99,9 +99,26 @@ pub fn empty_state(ui: &mut Ui, rect: Rect, title: &str, text: &str, action: Opt
     })
 }
 
-/// The empty state for the whole workspace, used once: before anything has been added.
-pub fn hero_state(ui: &mut Ui, rect: Rect, title: &str, text: &str, action: &str, other: &str) -> (Response, Response) {
-    let c = rect.center() - egui::vec2(0.0, 28.0);
+/// A project to offer again on the start screen.
+#[derive(Clone, Debug)]
+pub struct RecentItem {
+    pub name: String,
+    /// The folder it's in.
+    pub place: String,
+    pub when: String,
+}
+
+/// The empty state for the whole workspace, used once: before anything has been added. Below the two
+/// actions are recent projects, as many as fit. Also returns which of those was clicked.
+pub fn hero_state(ui: &mut Ui, rect: Rect, title: &str, text: &str, action: &str, other: &str, recent: &[RecentItem]) -> (Response, Response, Option<usize>) {
+    const INTRO_H: f32 = 94.0;
+    const RECENT_LABEL_H: f32 = 44.0;
+    const RECENT_ROW_H: f32 = 30.0;
+    const RECENT_W: f32 = 460.0;
+    let room = ((rect.height() - INTRO_H - RECENT_LABEL_H - SP_6) / RECENT_ROW_H).max(0.0) as usize;
+    let rows = &recent[..recent.len().min(room).min(6)];
+    let list_h = if rows.is_empty() { 0.0 } else { RECENT_LABEL_H + rows.len() as f32 * RECENT_ROW_H };
+    let c = egui::pos2(rect.center().x, rect.center().y - (INTRO_H + list_h) * 0.5 + 16.0);
     let painter = ui.painter_at(rect);
     painter.text(c, Align2::CENTER_CENTER, title, font_display(), TEXT);
     painter.text(c + egui::vec2(0.0, 28.0), Align2::CENTER_CENTER, text, font_body(), TEXT_3);
@@ -111,7 +128,35 @@ pub fn hero_state(ui: &mut Ui, rect: Rect, title: &str, text: &str, action: &str
     let left = c.x - (width + SP_2 + other_width) * 0.5;
     let at = Rect::from_min_size(egui::pos2(left, c.y + 66.0 - CONTROL_H * 0.5), egui::vec2(width, CONTROL_H));
     let other_at = Rect::from_min_size(egui::pos2(at.right() + SP_2, at.top()), egui::vec2(other_width, CONTROL_H));
-    (ui.put(at, Button::primary(action)), ui.put(other_at, Button::secondary(other)))
+    let (first, second) = (ui.put(at, Button::primary(action)), ui.put(other_at, Button::secondary(other)));
+
+    let mut picked = None;
+    if !rows.is_empty() {
+        let width = RECENT_W.min(rect.width() - SP_6);
+        let (x0, x1) = (c.x - width * 0.5, c.x + width * 0.5);
+        let label_y = at.bottom() + RECENT_LABEL_H - SP_2;
+        painter.text(egui::pos2(x0 + SP_2, label_y), Align2::LEFT_BOTTOM, "Recent", font_caption(), TEXT_3);
+        for (i, item) in rows.iter().enumerate() {
+            let top = label_y + SP_1 + i as f32 * RECENT_ROW_H;
+            let row = Rect::from_min_max(egui::pos2(x0, top), egui::pos2(x1, top + RECENT_ROW_H));
+            let response = ui.interact(row, ui.scope_id().with(("recent", i)), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.hovered() {
+                painter.rect_filled(row, R_S, CONTROL);
+            }
+            if response.clicked() {
+                picked = Some(i);
+            }
+            let y = row.center().y;
+            let name = painter.text(egui::pos2(row.left() + SP_2, y), Align2::LEFT_CENTER, &item.name, font_label(), TEXT);
+            let when = painter.text(egui::pos2(row.right() - SP_2, y), Align2::RIGHT_CENTER, &item.when, font_caption(), TEXT_3);
+            let place = Rect::from_min_max(egui::pos2(name.right() + SP_3, row.top()), egui::pos2(when.left() - SP_3, row.bottom()));
+            if place.is_positive() {
+                let clipped = painter.with_clip_rect(place.intersect(rect));
+                clipped.text(egui::pos2(place.left(), y), Align2::LEFT_CENTER, &item.place, font_caption(), TEXT_3);
+            }
+        }
+    }
+    (first, second, picked)
 }
 
 /// A shortcut in a list of them, with the keys in a column so that the descriptions line up.

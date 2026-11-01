@@ -150,6 +150,9 @@ pub struct App {
     autosave_busy: Arc<std::sync::atomic::AtomicBool>,
     autosave_failed: Arc<std::sync::atomic::AtomicBool>,
     autosave_warned: bool,
+    /// Samples are being copied into the package, and whether another save asked for that since.
+    media_busy: bool,
+    media_again: bool,
     /// Whether the autosave on disk came from this session.
     autosave_mine: bool,
     /// The output the system is using, kept up to date from another thread.
@@ -265,6 +268,8 @@ impl App {
             autosave_busy: Default::default(),
             autosave_failed: Default::default(),
             autosave_warned: false,
+            media_busy: false,
+            media_again: false,
             autosave_mine: false,
             system_output,
             render_state: None,
@@ -615,13 +620,28 @@ impl App {
     /// Uses an earlier transcript of this file if there is one, preferring larger models.
     fn load_cached_transcript(&mut self, source: SourceId) -> bool {
         let Some(path) = self.project.source(source).map(|s| s.path.clone()) else { return false };
-        let cached = MODELS.iter().rev().find_map(|m| transcribe::load_cached(&path, m.id));
+        let packaged = self.packaged_transcript_path(source).and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok());
+        let cached = packaged.or_else(|| MODELS.iter().rev().find_map(|m| transcribe::load_cached(&path, m.id)));
         match cached {
             Some(transcript) => {
                 self.index.set_transcript(source.0, transcript);
                 true
             }
             None => false,
+        }
+    }
+
+    /// A package keeps its words, because they can take minutes to find again and may have been corrected.
+    fn packaged_transcript_path(&self, source: SourceId) -> Option<PathBuf> {
+        let package = mp_model::file::package_of(self.project_path.as_deref()?)?;
+        Some(package.join("transcripts").join(format!("{}.json", source.0)))
+    }
+
+    pub fn save_packaged_transcript(&self, source: SourceId) {
+        let (Some(path), Some(transcript)) = (self.packaged_transcript_path(source), self.index.transcript(source.0)) else { return };
+        if let (Some(folder), Ok(json)) = (path.parent(), serde_json::to_vec(transcript)) {
+            let _ = std::fs::create_dir_all(folder);
+            let _ = mp_model::file::atomic_write(&path, &json);
         }
     }
 
@@ -749,12 +769,17 @@ impl App {
         }
     }
 
-    pub fn open_project_at(&mut self, path: &Path) {
+    pub fn open_project_at(&mut self, picked: &Path) {
+        let file = mp_model::file::project_file(picked);
+        let path = file.as_path();
         match Project::load_file(path) {
             Ok((project, repairs)) => {
                 self.install_project(project, path);
                 self.saved_state = self.project.clone();
                 self.tempo_user_set = true;
+                if path.extension().is_some_and(|e| e == FILE_EXTENSION) {
+                    self.remember_recent(path);
+                }
                 self.check_recovery();
                 if repairs > 0 {
                     self.toast(ToastKind::Info, format!("Repaired {repairs} damaged value{} in this project", if repairs == 1 { "" } else { "s" }));
@@ -793,7 +818,37 @@ impl App {
         }
         self.project = project;
         self.project_path = Some(path.to_path_buf());
+        if mp_model::file::package_of(path).is_some() {
+            self.project.name = mp_model::file::project_title(path);
+        }
         self.needs_compile = true;
+    }
+
+    fn remember_recent(&mut self, file: &Path) {
+        const MOST_RECENT: usize = 12;
+        let path = mp_model::file::package_of(file).unwrap_or(file).to_path_buf();
+        self.settings.recent_projects.retain(|p| *p != path);
+        self.settings.recent_projects.insert(0, path);
+        self.settings.recent_projects.truncate(MOST_RECENT);
+        self.settings.save();
+    }
+
+    /// Recent projects that are still there, newest first, with how to show them.
+    pub fn recent_projects(&self) -> Vec<(PathBuf, crate::ds::RecentItem)> {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let now = std::time::SystemTime::now();
+        let shown = self.settings.recent_projects.iter().filter_map(|path| {
+            let file = mp_model::file::project_file(path);
+            let modified = std::fs::metadata(&file).ok()?.modified().ok()?;
+            let folder = path.parent().unwrap_or(path);
+            let place = match home.as_deref().and_then(|h| folder.strip_prefix(h).ok()) {
+                Some(inside) => Path::new("~").join(inside).display().to_string(),
+                None => folder.display().to_string(),
+            };
+            let when = recent_age(now.duration_since(modified).unwrap_or_default().as_secs());
+            Some((path.clone(), crate::ds::RecentItem { name: mp_model::file::project_title(&file), place, when }))
+        });
+        shown.collect()
     }
 
     /// Points a source at where its file is now.
@@ -816,6 +871,38 @@ impl App {
         }
     }
 
+    /// Copies what the project plays into its package, in the background as it may be gigabytes. The project is
+    /// already saved by then and playing the originals, so nothing depends on this finishing.
+    fn collect_media(&mut self) {
+        let Some(package) = self.project_path.as_deref().and_then(mp_model::file::package_of).map(Path::to_path_buf) else { return };
+        if self.media_busy {
+            self.media_again = true;
+            return;
+        }
+        let paths = mp_model::file::media_to_collect(&self.project, &package);
+        if !paths.is_empty() {
+            self.media_busy = true;
+            self.jobs.collect_media(paths, package);
+        }
+    }
+
+    fn on_media_collected(&mut self, package: PathBuf, moves: Vec<(PathBuf, PathBuf)>, error: Option<String>) {
+        self.media_busy = false;
+        let file = self.project_path.clone().filter(|f| mp_model::file::package_of(f) == Some(package.as_path()));
+        if let Some(file) = file {
+            self.project.use_collected(&moves);
+            self.saved_state.use_collected(&moves);
+            if let Err(e) = self.saved_state.save_file(&file, false) {
+                self.toast(ToastKind::Bad, format!("Couldn't update the project after copying its samples: {e}"));
+            }
+        }
+        if let Some(error) = error {
+            self.toast(ToastKind::Bad, format!("Couldn't copy every sample into the project, so it still plays the originals: {error}"));
+        } else if std::mem::take(&mut self.media_again) {
+            self.collect_media();
+        }
+    }
+
     pub fn save_as(&mut self) {
         let dialog = rfd::FileDialog::new()
             .add_filter("Mouthpiece project", &[FILE_EXTENSION])
@@ -825,8 +912,16 @@ impl App {
         }
     }
 
-    pub fn save_to(&mut self, path: &Path) {
-        let previous_name = std::mem::replace(&mut self.project.name, file_stem(path));
+    pub fn save_to(&mut self, picked: &Path) {
+        let file = match mp_model::file::make_package(picked) {
+            Ok(file) => file,
+            Err(e) => {
+                self.toast(ToastKind::Bad, format!("Couldn't save, so nothing was changed on disk: {e}"));
+                return;
+            }
+        };
+        let path = file.as_path();
+        let previous_name = std::mem::replace(&mut self.project.name, mp_model::file::project_title(path));
         // Under this name before saving, which may have been the untitled one.
         let old_autosave = self.autosave_path();
         match self.project.save_file(path, true) {
@@ -837,6 +932,11 @@ impl App {
                 self.wait_for_autosave();
                 let _ = std::fs::remove_file(old_autosave);
                 let _ = std::fs::remove_file(self.autosave_path());
+                for source in self.project.sources.iter().map(|s| s.id).collect::<Vec<_>>() {
+                    self.save_packaged_transcript(source);
+                }
+                self.remember_recent(path);
+                self.collect_media();
                 self.toast(ToastKind::Good, "Saved");
             }
             Err(e) => {
@@ -1011,6 +1111,7 @@ impl App {
                 JobEvent::Transcribed { source, transcript } => {
                     let n = transcript.words.len();
                     self.index.set_transcript(source.0, transcript);
+                    self.save_packaged_transcript(source);
                     self.say.dirty = true;
                     self.takes_memo = None;
                     self.toast(ToastKind::Good, format!("Found {n} word{}", if n == 1 { "" } else { "s" }));
@@ -1061,6 +1162,7 @@ impl App {
                         self.toast(ToastKind::Bad, format!("Couldn't get ffmpeg: {error}"));
                     }
                 }
+                JobEvent::MediaCollected { package, moves, error } => self.on_media_collected(package, moves, error),
                 JobEvent::FfmpegReady => self.on_ffmpeg_ready(),
                 JobEvent::StemsReady { source, files } => self.finish_stems(source, files),
                 JobEvent::StemsFailed { source, error } => self.on_stems_failed(source, error),
@@ -1209,3 +1311,15 @@ impl App {
     }
 }
 
+/// How long ago something was, in words.
+fn recent_age(seconds: u64) -> String {
+    const HOUR: u64 = 3600;
+    const DAY: u64 = 24 * HOUR;
+    match seconds {
+        s if s < 60 => "Just now".to_string(),
+        s if s < HOUR => format!("{} min ago", s / 60),
+        s if s < DAY => format!("{} h ago", s / HOUR),
+        s if s < 2 * DAY => "Yesterday".to_string(),
+        s => format!("{} days ago", s / DAY),
+    }
+}

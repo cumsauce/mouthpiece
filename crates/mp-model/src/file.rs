@@ -9,6 +9,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Bump when a saved project would lose something if read by an older version.
 pub const FORMAT_VERSION: u32 = 1;
 const BACKUPS: usize = 3;
+const EXTENSION: &str = "mouthpiece";
+/// The project inside a package. A package is a folder holding this and everything it plays, so that it can
+/// be moved or sent as one thing. The inner file means that any system's file dialog can open one too.
+pub const PACKAGE_FILE: &str = "project.mouthpiece";
+const MEDIA_FOLDER: &str = "media";
 
 /// Replaces a file in one step: it's either the old file or the whole new one, even after a power cut.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -90,10 +95,14 @@ fn record_relative_paths(project: &mut Project, folder: &Path) {
 
 /// Finds a file that isn't where it was: moved along with the project, or sitting beside it.
 fn find_moved(recorded: &Path, relative: Option<&Path>, folder: Option<&Path>) -> Option<PathBuf> {
+    let folder = folder?;
+    // Inside the project's own folder wins, or a copy of a project would play the original's files.
+    if let Some(inside) = relative.filter(|r| !r.starts_with("..")).map(|r| folder.join(r)).filter(|p| p.exists()) {
+        return (inside != recorded).then_some(inside);
+    }
     if recorded.exists() {
         return None;
     }
-    let folder = folder?;
     let along = relative.map(|r| folder.join(r)).filter(|p| p.exists());
     along.or_else(|| recorded.file_name().map(|n| folder.join(n)).filter(|p| p.exists()))
 }
@@ -109,6 +118,127 @@ fn resolve_paths(source: &mut Source, folder: Option<&Path>) {
     }
     source.relative_path = None;
     source.relative_picture = None;
+}
+
+/// The project file to read for something picked: a package, or a file from before there were packages.
+pub fn project_file(picked: &Path) -> PathBuf {
+    if picked.is_dir() {
+        picked.join(PACKAGE_FILE)
+    } else {
+        picked.to_path_buf()
+    }
+}
+
+/// The package a project file is in, if it's in one.
+pub fn package_of(file: &Path) -> Option<&Path> {
+    let is_inner = file.file_name().is_some_and(|n| n == PACKAGE_FILE);
+    file.parent().filter(|p| is_inner && p.extension().is_some_and(|e| e == EXTENSION))
+}
+
+/// What a project is called, which is the name of its package or file.
+pub fn project_title(file: &Path) -> String {
+    let named = package_of(file).unwrap_or(file);
+    named.file_stem().map_or_else(|| "Untitled".to_string(), |s| s.to_string_lossy().into_owned())
+}
+
+/// Gets a package ready to save to at `path`, and returns its project file. A project file from before there
+/// were packages moves inside, with nothing lost, and the first save then keeps it as a backup.
+pub fn make_package(path: &Path) -> std::io::Result<PathBuf> {
+    if package_of(path).is_some() {
+        std::fs::create_dir_all(path.parent().unwrap_or(path))?;
+        return Ok(path.to_path_buf());
+    }
+    let package = if path.extension().is_some_and(|e| e == EXTENSION) {
+        path.to_path_buf()
+    } else {
+        let mut name = path.as_os_str().to_owned();
+        name.push(format!(".{EXTENSION}"));
+        PathBuf::from(name)
+    };
+    if package.is_file() {
+        let name = package.file_name().map_or("project".into(), |n| n.to_string_lossy().into_owned());
+        let packing = package.with_file_name(format!(".{name}.{}.packing", std::process::id()));
+        std::fs::create_dir_all(&packing)?;
+        std::fs::rename(&package, packing.join(PACKAGE_FILE))?;
+        if let Err(error) = std::fs::rename(&packing, &package) {
+            let _ = std::fs::rename(packing.join(PACKAGE_FILE), &package);
+            let _ = std::fs::remove_dir(&packing);
+            return Err(error);
+        }
+    } else {
+        std::fs::create_dir_all(&package)?;
+    }
+    Ok(package.join(PACKAGE_FILE))
+}
+
+/// The files a project plays that aren't inside its package yet.
+pub fn media_to_collect(project: &Project, package: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for path in project.sources.iter().flat_map(|s| std::iter::once(&s.path).chain(&s.picture_path)) {
+        if !path.starts_with(package) && path.is_file() && !paths.contains(path) {
+            paths.push(path.clone());
+        }
+    }
+    paths
+}
+
+fn same_contents(a: &Path, b: &Path) -> std::io::Result<bool> {
+    use std::io::Read;
+    if std::fs::metadata(a)?.len() != std::fs::metadata(b)?.len() {
+        return Ok(false);
+    }
+    let (mut a, mut b) = (std::fs::File::open(a)?, std::fs::File::open(b)?);
+    let (mut x, mut y) = (vec![0u8; 1 << 20], vec![0u8; 1 << 20]);
+    loop {
+        let read = a.read(&mut x)?;
+        if read == 0 {
+            return Ok(true);
+        }
+        b.read_exact(&mut y[..read])?;
+        if x[..read] != y[..read] {
+            return Ok(false);
+        }
+    }
+}
+
+/// Copies one file into a folder, or finds it's there already. Files that share a name stay apart, as every
+/// song's stems do. A file only appears under its final name once it's all there.
+fn collect_file(from: &Path, media: &Path) -> std::io::Result<PathBuf> {
+    let stem = from.file_stem().map_or("media".into(), |n| n.to_string_lossy().into_owned());
+    let extension = from.extension().map_or(String::new(), |e| format!(".{}", e.to_string_lossy()));
+    for n in 1u32.. {
+        let name = if n == 1 { format!("{stem}{extension}") } else { format!("{stem} {n}{extension}") };
+        let to = media.join(&name);
+        if !to.exists() {
+            let tmp = media.join(format!(".{name}.tmp"));
+            std::fs::copy(from, &tmp)?;
+            std::fs::File::open(&tmp)?.sync_all()?;
+            std::fs::rename(&tmp, &to)?;
+            return Ok(to);
+        }
+        if same_contents(from, &to)? {
+            return Ok(to);
+        }
+    }
+    unreachable!("there's always another number to try")
+}
+
+/// Copies files into a package. Returns where each one went and, if it had to stop, why. What was copied by
+/// then still counts, and the rest of the project keeps playing the originals.
+pub fn collect_media(paths: &[PathBuf], package: &Path, on_progress: &mut dyn FnMut(f32)) -> (Vec<(PathBuf, PathBuf)>, Option<String>) {
+    let media = package.join(MEDIA_FOLDER);
+    if let Err(error) = std::fs::create_dir_all(&media) {
+        return (Vec::new(), Some(error.to_string()));
+    }
+    let mut moves = Vec::new();
+    for (i, path) in paths.iter().enumerate() {
+        on_progress(i as f32 / paths.len() as f32);
+        match collect_file(path, &media) {
+            Ok(to) => moves.push((path.clone(), to)),
+            Err(error) => return (moves, Some(error.to_string())),
+        }
+    }
+    (moves, None)
 }
 
 fn finite64(value: &mut f64, fallback: f64, repairs: &mut usize) {
@@ -230,6 +360,19 @@ impl Project {
             repairs += 1;
         }
         repairs
+    }
+
+    /// Points sources at the copies `collect_media` made.
+    pub fn use_collected(&mut self, moves: &[(PathBuf, PathBuf)]) {
+        let moved = |path: &mut PathBuf| {
+            if let Some((_, to)) = moves.iter().find(|(from, _)| from == path) {
+                *path = to.clone();
+            }
+        };
+        for source in &mut self.sources {
+            moved(&mut source.path);
+            source.picture_path.iter_mut().for_each(moved);
+        }
     }
 
     /// The text of a project file, checked by reading it back first.
@@ -371,6 +514,63 @@ mod tests {
         value.as_object_mut().unwrap().remove("format_version");
         std::fs::write(&path, value.to_string()).unwrap();
         assert!(Project::load_file(&path).is_ok());
+    }
+
+    #[test]
+    fn a_package_holds_its_media_and_still_works_after_moving_or_copying() {
+        let dir = scratch("package");
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::create_dir_all(dir.join("b")).unwrap();
+        std::fs::write(dir.join("a/Vocals.wav"), b"one").unwrap();
+        std::fs::write(dir.join("b/Vocals.wav"), b"two").unwrap();
+        let mut p = Project::default();
+        p.add_source(dir.join("a/Vocals.wav"), "A".into(), 1.0, TrackKind::Vocal);
+        p.add_source(dir.join("b/Vocals.wav"), "B".into(), 1.0, TrackKind::Vocal);
+
+        let file = make_package(&dir.join("Song")).unwrap();
+        let package = dir.join("Song.mouthpiece");
+        assert_eq!(file, package.join(PACKAGE_FILE));
+        assert_eq!(project_title(&file), "Song");
+        let (moves, error) = collect_media(&media_to_collect(&p, &package), &package, &mut |_| {});
+        assert_eq!((moves.len(), error), (2, None));
+        p.use_collected(&moves);
+        assert_eq!(std::fs::read(&p.sources[0].path).unwrap(), b"one");
+        assert_eq!(std::fs::read(&p.sources[1].path).unwrap(), b"two");
+        assert_ne!(p.sources[0].path, p.sources[1].path);
+        assert!(media_to_collect(&p, &package).is_empty());
+        p.save_file(&file, true).unwrap();
+
+        // Collecting the same files again doesn't make more of them.
+        let mut again = Project::default();
+        again.add_source(dir.join("a/Vocals.wav"), "A".into(), 1.0, TrackKind::Vocal);
+        let (moves, _) = collect_media(&media_to_collect(&again, &package), &package, &mut |_| {});
+        assert_eq!(moves[0].1, p.sources[0].path);
+
+        // A copy plays its own files, even with the original still there.
+        let copy = dir.join("Copy.mouthpiece");
+        std::fs::create_dir_all(copy.join("media")).unwrap();
+        std::fs::copy(&file, copy.join(PACKAGE_FILE)).unwrap();
+        for entry in std::fs::read_dir(package.join("media")).unwrap().flatten() {
+            std::fs::copy(entry.path(), copy.join("media").join(entry.file_name())).unwrap();
+        }
+        let (back, _) = Project::load_file(&project_file(&copy)).unwrap();
+        assert!(back.sources.iter().all(|s| s.path.starts_with(&copy)), "{:?}", back.sources[0].path);
+    }
+
+    #[test]
+    fn an_old_project_file_becomes_a_package_and_is_kept_as_a_backup() {
+        let dir = scratch("convert");
+        let old = dir.join("Song.mouthpiece");
+        let mut p = Project::default();
+        p.bpm = 100.0;
+        p.save_file(&old, false).unwrap();
+        let file = make_package(&old).unwrap();
+        assert!(old.is_dir());
+        p.bpm = 140.0;
+        p.save_file(&file, true).unwrap();
+        assert_eq!(Project::load_file(&project_file(&old)).unwrap().0.bpm, 140.0);
+        assert_eq!(Project::load_file(&backup_paths(&file)[0]).unwrap().0.bpm, 100.0);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "nothing left over");
     }
 
     #[test]

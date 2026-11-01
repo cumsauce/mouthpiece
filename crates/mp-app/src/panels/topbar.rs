@@ -64,6 +64,16 @@ impl App {
                 self.recover_autosave();
                 ui.close();
             }
+            let recent = self.recent_projects();
+            if !recent.is_empty() {
+                menu_separator(ui);
+                for (path, item) in recent.into_iter().take(5) {
+                    if menu_item(ui, &item.name, None).clicked() {
+                        self.after_discard(crate::app::AfterDiscard::OpenPath(path));
+                        ui.close();
+                    }
+                }
+            }
             menu_separator(ui);
             if menu_item(ui, "Keyboard shortcuts", Some("?")).clicked() {
                 self.show_shortcuts = true;

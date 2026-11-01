@@ -115,6 +115,15 @@ that, typing its name uses it, and it's listed under My words.
 
 A clip dragged to another track, or dropped inside a longer clip, cuts a space for itself in what's under it.
 
+### Saving
+
+A project is a package, `Song.mouthpiece`, which holds the project, a copy of every sample it plays, its transcripts and
+its backups, so it can be moved or sent as one thing. On a Mac it looks like a single file. Elsewhere it's a folder, and
+opening `project.mouthpiece` inside it, or dropping the folder on the app, opens it. Samples are copied in the background
+after saving. Older project files still open, and become packages the next time they're saved, with the old file kept
+as a backup inside. Samples no longer in a project stay in its package until removed by hand. Recent projects are on
+the start screen and in the Mouthpiece menu.
+
 Nothing you do changes your recordings, and editing a placed copy doesn't change the saved word. Revert to saved
 and Restore original (`⇧R`) go back from any experiment.
 
