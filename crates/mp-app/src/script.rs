@@ -175,6 +175,13 @@ fn run(script: &mut Script, app: &mut App, ctx: &egui::Context) {
         }
         "resize" => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(numbers[0], numbers[1]))),
         "seek" => app.seek(numbers[0] as f64),
+        "recovery" => app.recovery = true,
+        "lyrics_search" => app.open_lyrics_for_first(),
+        "lyrics_file" => {
+            if let (Some(source), Ok(text)) = (app.project.sources.first().map(|s| s.id), std::fs::read_to_string(rest)) {
+                app.apply_lyrics(source, text);
+            }
+        }
         "find" => {
             app.open_find_song();
             app.find.query = rest.to_string();

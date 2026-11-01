@@ -173,7 +173,7 @@ mod tests {
     fn connected_index(text: &str) -> WordIndex {
         let words = text.split_whitespace().enumerate().map(|(i, w)| word(w, i as f64 * 0.3, 0.9)).collect();
         let mut idx = WordIndex::default();
-        idx.set_transcript(1, Transcript { words, model: "test".into() });
+        idx.set_transcript(1, Transcript { words, model: "test".into(), before_lyrics: None });
         idx
     }
 
@@ -234,7 +234,7 @@ mod tests {
         words[2].pitch_hz = Some(440.0); // an octave away from "hello"
         words[3].pitch_hz = Some(233.0); // a semitone away
         let mut idx = WordIndex::default();
-        idx.set_transcript(1, Transcript { words, model: "t".into() });
+        idx.set_transcript(1, Transcript { words, model: "t".into(), before_lyrics: None });
         let parts = plan("hello world", &idx);
         let world = parts.iter().find(|p| p.text == "world").unwrap();
         assert_eq!(world.pieces()[0].start, 2.0);

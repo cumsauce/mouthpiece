@@ -379,7 +379,7 @@ pub(crate) mod tests {
     pub(crate) fn index(text: &str) -> WordIndex {
         let words = text.split_whitespace().enumerate().map(|(i, w)| word(w, i as f64, 0.9)).collect();
         let mut idx = WordIndex::default();
-        idx.set_transcript(1, Transcript { words, model: "test".into() });
+        idx.set_transcript(1, Transcript { words, model: "test".into(), before_lyrics: None });
         idx
     }
 
@@ -443,7 +443,7 @@ pub(crate) mod tests {
         a.pitch_hz = Some(440.0);
         b.pitch_hz = Some(222.0);
         let mut idx = WordIndex::default();
-        idx.set_transcript(1, Transcript { words: vec![a, b], model: "t".into() });
+        idx.set_transcript(1, Transcript { words: vec![a, b], model: "t".into(), before_lyrics: None });
         let wanted = SoundWanted { symbols: vec!["ae".into()], pitch_hz: Some(220.0), ..Default::default() };
         assert_eq!(idx.sound_candidates(&wanted)[0].hit.context.as_deref(), Some("mat"));
     }
@@ -479,7 +479,7 @@ pub(crate) mod tests {
     fn higher_confidence_ranks_first() {
         let mut idx = WordIndex::default();
         let words = vec![word("go", 0.0, 0.2), word("go", 1.0, 0.95)];
-        idx.set_transcript(1, Transcript { words, model: "t".into() });
+        idx.set_transcript(1, Transcript { words, model: "t".into(), before_lyrics: None });
         assert_eq!(idx.search("go", 5)[0].start, 1.0);
     }
 }

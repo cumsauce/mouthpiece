@@ -12,7 +12,7 @@ static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 const FAKE_LIBRARY: &str = r#"
 import os, shutil, sys
 class Separator:
-    def __init__(self, log_level=None, model_file_dir=None, output_dir=None, output_format=None, mdxc_params=None, demucs_params=None):
+    def __init__(self, log_level=None, model_file_dir=None, output_dir=None, output_format=None, normalization_threshold=None, mdxc_params=None, demucs_params=None):
         self.out = output_dir
     def load_model(self, model_filename=None):
         if model_filename == "missing.ckpt":

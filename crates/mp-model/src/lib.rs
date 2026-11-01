@@ -5,6 +5,7 @@
 
 mod edit;
 mod history;
+pub mod file;
 mod patches;
 pub mod picture;
 pub mod video;
@@ -53,7 +54,10 @@ pub struct Project {
     /// Plays every recording as it was, to compare with the changes.
     #[serde(default)]
     pub bypass_patches: bool,
-    next_id: u64,
+    /// See `file::FORMAT_VERSION`.
+    #[serde(default)]
+    pub format_version: u32,
+    pub(crate) next_id: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +110,11 @@ pub struct Source {
     /// Where the picture comes from when it isn't `path`, as for a stem split from a video.
     #[serde(default)]
     pub picture_path: Option<PathBuf>,
+    /// Where these were relative to the project file when saved, to find them if the folder moves.
+    #[serde(default)]
+    pub relative_path: Option<PathBuf>,
+    #[serde(default)]
+    pub relative_picture: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +386,7 @@ impl Default for Project {
             words: Vec::new(),
             patches: Vec::new(),
             bypass_patches: false,
+            format_version: file::FORMAT_VERSION,
             next_id: 1,
         };
         let id = DeviceId(p.alloc_id());

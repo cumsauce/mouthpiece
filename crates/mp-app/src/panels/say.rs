@@ -193,6 +193,10 @@ impl App {
         }
         if let Some(source) = self.split_offer() {
             self.split_offer_card(ui, source);
+            // Words wait for this decision, so the speech model can too.
+            if self.stems.held.contains(&source) {
+                return;
+            }
         }
         let needs_model = !MODELS.iter().any(|m| m.is_installed());
         let has_vocal = self.project.sources.iter().any(|s| s.kind == TrackKind::Vocal);
@@ -844,6 +848,7 @@ impl App {
         egui::ScrollArea::vertical().id_salt("transcript").auto_shrink(false).show(ui, |ui| {
             for (source, name) in sources {
                 ui.label(strong(name));
+                self.lyrics_row(ui, source);
                 ui.add_space(SP_1);
                 if let Some(transcript) = self.index.transcript(source.0).cloned() {
                     self.transcript_text(ui, source, &transcript);
@@ -962,6 +967,12 @@ impl App {
                 card_frame().show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.label(strong(truncate(&source.name, 34)));
+                    if !source.path.exists() {
+                        ui.label(caption("This file can't be found.").color(BAD));
+                        if ui.add(Button::secondary("Locate…").small().tip("Choose where this file is now", None)).clicked() {
+                            self.locate_source(source.id);
+                        }
+                    }
                     let mut info = format!("{} · {}", source.kind.label(), format_time(source.duration));
                     if let Some(bpm) = source.bpm {
                         info.push_str(&format!(" · {bpm:.1} BPM"));

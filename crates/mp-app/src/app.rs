@@ -9,6 +9,7 @@ use crate::jobs::{file_stem, JobEvent, Jobs};
 use crate::script::Script;
 use eframe::egui::{self, TextureHandle};
 use mp_analysis::peaks::Peaks;
+use mp_model::file::LoadError;
 use mp_analysis::search::{Hit, WordIndex};
 use mp_analysis::spectrogram::Spectrogram;
 use mp_analysis::transcribe::{self, TranscribeRequest, MODELS};
@@ -143,6 +144,12 @@ pub struct App {
     pub audio_panel: Option<crate::panels::setup::AudioPanel>,
     pub stems: crate::panels::setup::StemsState,
     pub find: crate::panels::find_song::FindSong,
+    pub lyrics: Option<crate::panels::lyrics::LyricsDialog>,
+    /// Whether to offer back unsaved work from a session that ended early.
+    pub recovery: bool,
+    autosave_busy: Arc<std::sync::atomic::AtomicBool>,
+    autosave_failed: Arc<std::sync::atomic::AtomicBool>,
+    autosave_warned: bool,
     /// The output the system is using, kept up to date from another thread.
     pub system_output: Arc<parking_lot::Mutex<Option<String>>>,
     pub render_state: Option<eframe::egui_wgpu::RenderState>,
@@ -175,7 +182,7 @@ pub struct App {
     /// Clips that were just placed, and when, to draw attention to them.
     pub flash: HashMap<ClipId, Instant>,
     /// Takes of the last word looked up, as this is needed every frame while a clip is selected.
-    takes_memo: Option<(String, Vec<Hit>)>,
+    pub takes_memo: Option<(String, Vec<Hit>)>,
 
     pub playhead: f64,
     pub play_start: f64,
@@ -249,6 +256,11 @@ impl App {
             audio_panel: None,
             stems: Default::default(),
             find: Default::default(),
+            lyrics: None,
+            recovery: false,
+            autosave_busy: Default::default(),
+            autosave_failed: Default::default(),
+            autosave_warned: false,
             system_output,
             render_state: None,
             track_focus: false,
@@ -658,6 +670,9 @@ impl App {
     }
 
     pub fn perform(&mut self, next: AfterDiscard) {
+        // Saved or thrown away by now, so it's not something to offer back later.
+        self.wait_for_autosave();
+        let _ = std::fs::remove_file(self.autosave_path());
         match next {
             AfterDiscard::New => self.new_project(),
             AfterDiscard::Open => self.open_dialog(),
@@ -677,6 +692,7 @@ impl App {
         self.cache = Arc::new(RenderCache::new());
         self.jobs.switch_project();
         self.stems = Default::default();
+        self.lyrics = None;
         self.find.split_after.clear();
         self.clipboard.clear();
         self.word_drag = None;
@@ -727,40 +743,62 @@ impl App {
     }
 
     pub fn open_project_at(&mut self, path: &Path) {
-        let loaded = std::fs::read_to_string(path)
-            .map_err(|e| e.to_string())
-            .and_then(|s| Project::from_json(&s).map_err(|e| e.to_string()));
-        match loaded {
-            Ok(mut project) => {
-                self.new_project();
-                // If a file moved, look for it next to the project before giving up on it.
-                let dir = path.parent().map(Path::to_path_buf);
-                for source in &mut project.sources {
-                    if !source.path.exists() {
-                        if let (Some(dir), Some(name)) = (&dir, source.path.file_name()) {
-                            let beside = dir.join(name);
-                            if beside.exists() {
-                                source.path = beside;
-                            }
-                        }
-                    }
-                }
-                let missing = project.sources.iter().filter(|s| !s.path.exists()).count();
-                if missing > 0 {
-                    self.toast(ToastKind::Bad, format!("{missing} source file(s) can't be found"));
-                }
-                for source in &project.sources {
-                    if source.path.exists() {
-                        self.jobs.import(source.path.clone(), self.sample_rate, Some(source.id));
-                    }
-                }
-                self.project = project;
+        match Project::load_file(path) {
+            Ok((project, repairs)) => {
+                self.install_project(project, path);
                 self.saved_state = self.project.clone();
-                self.project_path = Some(path.to_path_buf());
                 self.tempo_user_set = true;
-                self.needs_compile = true;
+                self.check_recovery();
+                if repairs > 0 {
+                    self.toast(ToastKind::Info, format!("Repaired {repairs} damaged value{} in this project", if repairs == 1 { "" } else { "s" }));
+                }
             }
-            Err(e) => self.toast(ToastKind::Bad, format!("Can't open project: {e}")),
+            Err(error @ LoadError::Newer(_)) => self.toast(ToastKind::Bad, error.to_string()),
+            Err(error) => self.open_last_good_copy(path, error),
+        }
+    }
+
+    /// A damaged project opens from its newest copy that still reads, without touching the damaged one until saved.
+    fn open_last_good_copy(&mut self, path: &Path, error: LoadError) {
+        let autosave = path.with_extension(format!("{FILE_EXTENSION}.autosave"));
+        let copies = std::iter::once(autosave).chain(mp_model::file::backup_paths(path));
+        match copies.into_iter().find_map(|copy| Project::load_file(&copy).ok()) {
+            Some((project, _)) => {
+                self.install_project(project, path);
+                self.saved_state = Project::default();
+                self.tempo_user_set = true;
+                self.toast(ToastKind::Bad, "That project file is damaged, so this is its most recent backup. Save to replace it.");
+            }
+            None => self.toast(ToastKind::Bad, error.to_string()),
+        }
+    }
+
+    fn install_project(&mut self, project: Project, path: &Path) {
+        self.new_project();
+        let missing = project.sources.iter().filter(|s| !s.path.exists()).count();
+        if missing > 0 {
+            self.toast(ToastKind::Bad, format!("{missing} source file{} can't be found. Locate them in Files.", if missing == 1 { "" } else { "s" }));
+        }
+        for source in &project.sources {
+            if source.path.exists() {
+                self.jobs.import(source.path.clone(), self.sample_rate, Some(source.id));
+            }
+        }
+        self.project = project;
+        self.project_path = Some(path.to_path_buf());
+        self.needs_compile = true;
+    }
+
+    /// Points a source at where its file is now.
+    pub fn locate_source(&mut self, source: SourceId) {
+        if let Some(path) = rfd::FileDialog::new().pick_file() {
+            let picked = path.clone();
+            self.edit("Locate file", |p| {
+                if let Some(s) = p.sources.iter_mut().find(|s| s.id == source) {
+                    s.path = picked;
+                }
+            });
+            self.jobs.import(path, self.sample_rate, Some(source));
         }
     }
 
@@ -781,17 +819,48 @@ impl App {
     }
 
     pub fn save_to(&mut self, path: &Path) {
-        self.project.name = file_stem(path);
-        match write_project(&self.project, path) {
+        let previous_name = std::mem::replace(&mut self.project.name, file_stem(path));
+        // Under this name before saving, which may have been the untitled one.
+        let old_autosave = self.autosave_path();
+        match self.project.save_file(path, true) {
             Ok(()) => {
                 self.saved_state = self.project.clone();
                 self.project_path = Some(path.to_path_buf());
                 // The saved file is now the newest copy, so an older autosave would only mislead.
+                self.wait_for_autosave();
+                let _ = std::fs::remove_file(old_autosave);
                 let _ = std::fs::remove_file(self.autosave_path());
                 self.toast(ToastKind::Good, "Saved");
             }
-            Err(e) => self.toast(ToastKind::Bad, format!("Save failed: {e}")),
+            Err(e) => {
+                self.project.name = previous_name;
+                self.toast(ToastKind::Bad, format!("Couldn't save, so nothing was changed on disk: {e}"));
+            }
         }
+    }
+
+    /// An autosave finishing just after this would look like newer work than what's being saved.
+    fn wait_for_autosave(&self) {
+        let waited = Instant::now();
+        while self.autosave_busy.load(std::sync::atomic::Ordering::Acquire) && waited.elapsed().as_secs() < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    /// Asks about unsaved work from a session that ended without saving, such as a crash.
+    pub fn check_recovery(&mut self) {
+        if self.script.is_some() {
+            return;
+        }
+        let path = self.autosave_path();
+        let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let saved = self.project_path.as_deref().and_then(modified);
+        self.recovery = modified(&path).is_some_and(|auto| saved.is_none_or(|s| auto > s));
+    }
+
+    pub fn discard_recovery(&mut self) {
+        self.recovery = false;
+        let _ = std::fs::remove_file(self.autosave_path());
     }
 
     fn autosave_path(&self) -> PathBuf {
@@ -817,16 +886,41 @@ impl App {
     }
 
     fn autosave(&mut self) {
-        if self.last_autosave.elapsed().as_secs() < AUTOSAVE_SECONDS || !self.is_dirty() {
+        use std::sync::atomic::Ordering;
+        if self.last_autosave.elapsed().as_secs() < AUTOSAVE_SECONDS {
             return;
         }
         self.last_autosave = Instant::now();
-        let path = self.autosave_path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
+        // A failed autosave mustn't interrupt the session, but it's worth saying once that it's happening.
+        if self.autosave_failed.swap(false, Ordering::Relaxed) && !self.autosave_warned {
+            self.autosave_warned = true;
+            self.toast(ToastKind::Bad, "Autosave isn't working. Is the disk full? Save your project somewhere else.");
         }
-        // A failed autosave must not interrupt the session, and the next attempt may succeed.
-        let _ = write_project(&self.project, &path);
+        let path = self.autosave_path();
+        if !self.is_dirty() {
+            // Undone back to what's saved, so there's nothing left to recover.
+            let _ = std::fs::remove_file(&path);
+            return;
+        }
+        if self.autosave_busy.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        // Text here, since the project can't leave this thread. The disk is slow, so the write isn't here.
+        let text = self.project.to_saved_text(path.parent());
+        let (busy, failed) = (self.autosave_busy.clone(), self.autosave_failed.clone());
+        std::thread::spawn(move || {
+            let written = text.and_then(|text| {
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+                }
+                mp_model::file::atomic_write(&path, text.as_bytes()).map_err(|e| e.to_string())
+            });
+            if let Err(error) = written {
+                eprintln!("autosave failed: {error}");
+                failed.store(true, Ordering::Relaxed);
+            }
+            busy.store(false, Ordering::Release);
+        });
     }
 
     // ----- Frame housekeeping -----
@@ -834,6 +928,7 @@ impl App {
     pub fn frame_start(&mut self) {
         self.process_jobs();
         self.watch_audio_device();
+        self.release_held_transcriptions();
         if !self.selection.is_empty() {
             self.track_focus = false;
         }
@@ -936,6 +1031,9 @@ impl App {
                 }
                 JobEvent::ExportFailed { error } => self.toast(ToastKind::Bad, format!("Render failed: {error}")),
                 JobEvent::StemsInstalled => self.on_stems_installed(),
+                JobEvent::LyricsResults { results } => self.on_lyrics_results(results),
+                JobEvent::LyricsApplied { source, transcript, report } => self.on_lyrics_applied(source, transcript, report),
+                JobEvent::LyricsFailed { error } => self.toast(ToastKind::Bad, error),
                 JobEvent::SongResults { job, results } => self.on_song_results(job, results),
                 JobEvent::SongDownloaded { path, split } => self.on_song_downloaded(path, split),
                 JobEvent::SongFailed { error } => self.on_song_failed(error),
@@ -1015,8 +1113,14 @@ impl App {
                 self.selected_track = Some(track.id);
             }
         }
-        // Vocals transcribe themselves. Any other source only picks up a transcript made earlier.
-        if kind == TrackKind::Vocal {
+        // Vocals transcribe themselves. Any other source only picks up a transcript made earlier. A whole song
+        // waits to see if it's about to be split, since the words are found far better from the vocal alone.
+        let may_split = self.find.split_after.contains(&path) || self.split_offer() == Some(source);
+        if kind == TrackKind::Vocal && may_split {
+            if !self.load_cached_transcript(source) {
+                self.stems.held.push(source);
+            }
+        } else if kind == TrackKind::Vocal {
             self.request_transcribe(source, false);
         } else if existing.is_some() {
             self.load_cached_transcript(source);
@@ -1086,9 +1190,3 @@ impl App {
     }
 }
 
-fn write_project(project: &Project, path: &Path) -> Result<(), String> {
-    let json = project.to_json().map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("tmp-save");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
-}

@@ -232,10 +232,12 @@ pub fn output_dir(input: &Path) -> PathBuf {
 }
 
 const MADE_WITH: &str = "made-with.txt";
+/// Bump when the same models would now make different stems, so that older ones are made again.
+const STEMS_VERSION: u32 = 3;
 
 /// Notes which models made a song's stems, because other models give different stems.
 fn made_with(settings: &StemSettings) -> String {
-    format!("{}\n{}\n", settings.vocal_model, settings.instrument_model)
+    format!("{}\n{}\nversion {STEMS_VERSION}\n", settings.vocal_model, settings.instrument_model)
 }
 
 /// Stems already made from this exact file with these models, which saves a long wait.

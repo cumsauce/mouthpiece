@@ -35,6 +35,8 @@ pub struct StemsState {
     /// What to split once the install finishes.
     pub after_install: Option<SourceId>,
     pub dismissed: HashSet<SourceId>,
+    /// Sources not transcribed yet because they may be about to be split.
+    pub held: Vec<SourceId>,
     /// Stems about to arrive that should show a video's picture.
     pub pending_picture: HashMap<PathBuf, PathBuf>,
 }
@@ -262,6 +264,22 @@ impl App {
         (whole_song && on_a_track && self.stems.running != Some(source.id) && !self.stems.dismissed.contains(&source.id)).then_some(source.id)
     }
 
+    /// Once a song has been decided on, and wasn't split, its words are found after all.
+    pub fn release_held_transcriptions(&mut self) {
+        if self.stems.held.is_empty() || self.stems.running.is_some() || self.stems.after_install.is_some() || self.stems.dialog.is_some() {
+            return;
+        }
+        let offered = self.split_offer();
+        let ready: Vec<SourceId> = self.stems.held.iter().copied().filter(|s| Some(*s) != offered).collect();
+        self.stems.held.retain(|s| Some(*s) == offered);
+        for source in ready {
+            let on_a_track = self.project.tracks.iter().flat_map(|t| &t.clips).any(|c| c.source == source);
+            if on_a_track {
+                self.request_transcribe(source, false);
+            }
+        }
+    }
+
     pub fn split_offer_card(&mut self, ui: &mut Ui, source: SourceId) {
         let is_music = self.project.source(source).is_some_and(|s| s.kind == TrackKind::Music);
         card_frame().show(ui, |ui| {
@@ -333,6 +351,11 @@ impl App {
     fn start_split(&mut self, source: SourceId, low_memory: bool) {
         let Some((name, path)) = self.project.source(source).map(|s| (s.name.clone(), s.path.clone())) else { return };
         self.stems.running = Some(source);
+        // Words found from the whole mix would only be thrown away.
+        let transcribing = format!("Transcribing {name}");
+        if let Some(job) = self.jobs.active.iter().find(|j| j.label == transcribing) {
+            job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.jobs.split_stems(source, &name, path, self.settings.stems.clone(), low_memory);
     }
 
@@ -363,6 +386,7 @@ impl App {
     /// One with cuts in it is someone's work, so it stays, muted.
     pub fn finish_stems(&mut self, source: SourceId, files: BTreeMap<String, PathBuf>) {
         self.stems.running = None;
+        self.stems.held.retain(|s| *s != source);
         let Some(original) = self.project.source(source).cloned() else { return };
         let duration = original.duration;
         self.edit("Split into stems", |p| {

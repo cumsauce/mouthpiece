@@ -80,7 +80,7 @@ impl eframe::App for App {
 
 impl App {
     pub fn any_modal_open(&self) -> bool {
-        self.palette_open || self.show_shortcuts || self.export_dialog.is_some() || self.pending_discard.is_some() || self.word_dialog.is_some() || self.rename_track.is_some() || self.audio_panel.is_some() || self.stems.dialog.is_some() || self.find.open
+        self.palette_open || self.show_shortcuts || self.export_dialog.is_some() || self.pending_discard.is_some() || self.word_dialog.is_some() || self.rename_track.is_some() || self.audio_panel.is_some() || self.stems.dialog.is_some() || self.find.open || self.lyrics.is_some() || self.recovery
     }
 
     fn handle_drops(&mut self, ctx: &egui::Context) {

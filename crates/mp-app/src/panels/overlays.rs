@@ -15,11 +15,40 @@ impl App {
         self.audio_modal(ctx);
         self.split_modal(ctx);
         self.find_song_modal(ctx);
+        self.lyrics_modal(ctx);
+        self.recovery_modal(ctx);
         if self.palette_open {
             self.palette(ctx);
         }
         if self.show_shortcuts {
             self.shortcuts_modal(ctx);
+        }
+    }
+
+    /// Offers back work from a session that ended without saving.
+    fn recovery_modal(&mut self, ctx: &egui::Context) {
+        if !self.recovery {
+            return;
+        }
+        let (mut recover, mut discard) = (false, false);
+        let dismissed = modal(ctx, "recovery", 380.0, |ui: &mut Ui| {
+            ui.label(heading("Recover unsaved work?"));
+            ui.add_space(SP_1);
+            ui.label(caption("This project has newer changes than its last save, from a session that ended without saving."));
+            ui.add_space(SP_4);
+            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), CONTROL_H), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                recover = ui.add(Button::primary("Recover")).clicked();
+                discard = ui.add(Button::ghost("Discard them")).clicked();
+            });
+        });
+        if recover {
+            self.recovery = false;
+            self.recover_autosave();
+        } else if discard {
+            self.discard_recovery();
+        } else if dismissed {
+            // Not answered, so it's kept, and still in the menu.
+            self.recovery = false;
         }
     }
 

@@ -89,7 +89,9 @@ class Pipeline:
         out = tempfile.mkdtemp(dir=self.work)
         mdxc = {"segment_size": 128 if low_memory else 256, "override_model_segment_size": low_memory, "batch_size": 1 if low_memory else None, "overlap": None, "pitch_shift": 0}
         demucs = {"segment_size": 10 if low_memory else "Default", "shifts": 1 if low_memory else 2, "overlap": 0.25, "segments_enabled": True}
-        separator = Separator(log_level=logging.INFO, model_file_dir=self.model_dir, output_dir=out, output_format="WAV", mdxc_params=mdxc, demucs_params=demucs)
+        # The default of 0.9 turns each stage and stem down by itself, and the instruments twice. Stems then
+        # no longer add up to the song, and the vocal comes out too loud for them. 1.0 only prevents clipping.
+        separator = Separator(log_level=logging.INFO, model_file_dir=self.model_dir, output_dir=out, output_format="WAV", normalization_threshold=1.0, mdxc_params=mdxc, demucs_params=demucs)
         separator.load_model(model_filename=model)
         self.separators[key] = (separator, out)
         return self.separators[key]
@@ -139,8 +141,37 @@ class Pipeline:
                 raise StageError("other", f"The instrument model didn't produce {missing}")
 
             emit("stage", stage="saving")
+            restore_levels(stems, source, job.get("format", "wav"))
             os.makedirs(job["output_dir"], exist_ok=True)
             return {name: save(path, job["output_dir"], name, job.get("format", "wav"), job.get("ffmpeg")) for name, path in stems.items()}
+
+
+def restore_levels(stems, source, fmt):
+    """Puts stems back at the song's levels. Taking the vocal out of a loud master pushes the instrumental
+    over full scale, and the separator turns it down to fit, so the stems wouldn't add up to the song and the
+    vocal would be too loud for them. Comparing with the song shows how much each side was turned down."""
+    # Measured by comparing with the song, so the worst this can do is leave things as they were.
+    try:
+        import librosa
+        import numpy as np
+        import soundfile as sf
+
+        audio = {name: sf.read(path, always_2d=True) for name, path in stems.items()}
+        rate = audio["Vocals"][1]
+        song, _ = librosa.load(source, sr=rate, mono=True)
+        vocals, rest = audio["Vocals"][0].mean(axis=1), audio["Instrumental"][0].mean(axis=1)
+        n = min(len(song), len(vocals), len(rest))
+        gains, *_ = np.linalg.lstsq(np.stack([vocals[:n], rest[:n]], axis=1), song[:n], rcond=None)
+        vocal_gain, rest_gain = [float(np.clip(g, 0.25, 4.0)) for g in gains]
+        log.info("Restoring levels: vocals x%.3f, instruments x%.3f", vocal_gain, rest_gain)
+        scaled = {name: data * (vocal_gain if name == "Vocals" else rest_gain) for name, (data, _) in audio.items()}
+        # Float WAV can go over full scale, and FLAC and MP3 can't, so those come down together, keeping the balance.
+        peak = max(float(np.abs(data).max()) for data in scaled.values())
+        trim = 1.0 if fmt == "wav" or peak <= 1.0 else 1.0 / peak
+        for name, data in scaled.items():
+            sf.write(stems[name], data * trim, rate, subtype="FLOAT")
+    except Exception:
+        log.warning("Couldn't restore levels, so the stems stay as separated", exc_info=True)
 
 
 def find_stem(path):

@@ -185,7 +185,7 @@ pub fn finish_transcript(segments: Vec<RawSegment>, mono: &[f32], sample_rate: f
             }
         })
         .collect();
-    Transcript { words, model: model.to_string() }
+    Transcript { words, model: model.to_string(), before_lyrics: None }
 }
 
 fn clean_text(s: &str) -> String {
@@ -373,7 +373,8 @@ pub fn save_cached(audio_path: &Path, model: &str, transcript: &Transcript) {
     if let Some(path) = cache_path(audio_path, model) {
         if let (Some(dir), Ok(json)) = (path.parent(), serde_json::to_vec(transcript)) {
             let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(path, json);
+            // Lost work if it's damaged, since a whole song takes minutes to transcribe again.
+            let _ = mp_model::file::atomic_write(&path, &json);
         }
     }
 }

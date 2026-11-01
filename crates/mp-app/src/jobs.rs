@@ -47,6 +47,9 @@ pub enum JobEvent {
     Exported { path: PathBuf, seconds: f64 },
     ExportFailed { error: String },
     Label { job: u64, label: String },
+    LyricsResults { results: Result<Vec<mp_analysis::lyrics::LyricsMatch>, String> },
+    LyricsApplied { source: SourceId, transcript: Transcript, report: mp_analysis::lyrics::LyricsReport },
+    LyricsFailed { error: String },
     SongResults { job: u64, results: Result<Vec<mp_analysis::online::SongResult>, String> },
     SongDownloaded { path: PathBuf, split: bool },
     SongFailed { error: String },
@@ -185,6 +188,28 @@ impl Jobs {
             }
             reporter.send(JobEvent::Done { job });
         }));
+    }
+
+    pub fn search_lyrics(&mut self, query: String, length: f64) {
+        let reporter = self.reporter(ANY_PROJECT);
+        std::thread::spawn(move || reporter.send(JobEvent::LyricsResults { results: mp_analysis::lyrics::search(&query, length) }));
+    }
+
+    /// Fits lyrics to the audio, which takes a while for a whole song.
+    pub fn apply_lyrics(&mut self, source: SourceId, path: PathBuf, transcript: Transcript, text: String, mono: Arc<Vec<f32>>, sample_rate: f32) {
+        let (job, _) = self.register("Applying lyrics".to_string(), false);
+        let reporter = self.reporter(self.project);
+        std::thread::spawn(move || {
+            let lines = mp_analysis::lyrics::parse(&text);
+            reporter.send(match mp_analysis::lyrics::apply(&transcript, &lines, &mono, sample_rate) {
+                Ok((corrected, report)) => {
+                    transcribe::save_cached(&path, &corrected.model.clone(), &corrected);
+                    JobEvent::LyricsApplied { source, transcript: corrected, report }
+                }
+                Err(error) => JobEvent::LyricsFailed { error },
+            });
+            reporter.send(JobEvent::Done { job });
+        });
     }
 
     /// Fetches ffmpeg on its own, for showing and rendering video.

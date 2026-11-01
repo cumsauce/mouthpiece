@@ -42,6 +42,19 @@ on what's left. This is Python, so the first split sets up a private environment
 Stems go in a `<song> stems` folder beside the song, along with `Instrumental`. Preferences are in `settings.json` in the app's
 data folder, including the model names.
 
+## Correcting words with lyrics
+
+Whisper is better at when words happen than which words they are, especially when sung. In the Lyrics tab, **Improve with
+lyrics** searches [LRCLIB](https://lrclib.net) or takes pasted lyrics, then lines them up with what was heard. Misheard words
+are corrected, missed ones are added where there's room, and timed lyrics can place whole missed lines. Ad-libs stay, and it
+can be undone. If the lyrics don't match the recording, nothing changes.
+
+## Your work is safe
+
+Saves can't leave a half-written file, and the last three are kept as `.backup1` to `.backup3` beside the project. Unsaved work
+autosaves every 30 seconds and is offered back after a crash. A damaged project opens from its newest good copy, and a project
+from a newer version is refused rather than damaged. Moving a project's folder keeps its files found.
+
 ## Tools it fetches for itself
 
 Nothing needs installing by hand. On first need, these go into a `tools` folder in the app's data folder:

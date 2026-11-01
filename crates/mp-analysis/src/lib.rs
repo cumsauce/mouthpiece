@@ -8,6 +8,7 @@ pub mod key;
 pub mod peaks;
 pub mod search;
 pub mod sentence;
+pub mod lyrics;
 pub mod online;
 pub mod spectrogram;
 pub mod stems;
@@ -43,6 +44,9 @@ pub struct Word {
 pub struct Transcript {
     pub words: Vec<Word>,
     pub model: String,
+    /// The words as heard, if lyrics have corrected them. See `lyrics.rs`.
+    #[serde(default)]
+    pub before_lyrics: Option<Vec<Word>>,
 }
 
 /// Lower-cases and strips everything but letters, digits and inner apostrophes.

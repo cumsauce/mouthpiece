@@ -27,7 +27,7 @@ impl Settings {
     pub fn save(&self) {
         if let Ok(text) = serde_json::to_string_pretty(self) {
             let _ = std::fs::create_dir_all(app_data_dir());
-            if let Err(e) = std::fs::write(path(), text) {
+            if let Err(e) = mp_model::file::atomic_write(&path(), text.as_bytes()) {
                 eprintln!("could not save settings: {e}");
             }
         }

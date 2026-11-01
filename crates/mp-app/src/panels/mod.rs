@@ -7,6 +7,7 @@ pub mod editor;
 pub mod find_song;
 pub mod inspector;
 pub mod lane;
+pub mod lyrics;
 pub mod mixer;
 pub mod overlays;
 pub mod picture;

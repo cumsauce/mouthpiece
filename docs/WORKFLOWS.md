@@ -29,7 +29,7 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 - **Don't have the file?** Find a song online (⇧⌘F), from the first screen: search or paste a link, then **Add and split**.
   Audio or video. The tools it needs arrive by themselves, and yt-dlp keeps itself up to date.
 - **Only have the song?** Drop it in. A project of one song offers **Split into stems** right where the next
-  step would be, before any words are looked for. It carries on in the background, uses the stems already made if
+  step would be. Words wait for that decision, even for a video, because they're found far better from the vocal alone. It carries on in the background, uses the stems already made if
   there are any, replaces the untouched song's track, and a video's picture stays on the vocal.
 - **Failure to avoid:** a dead end. "Can't transcribe" must be followed by the one button that fixes it, and "needs
   uv" by the command to install it and a way to check again.
@@ -200,6 +200,8 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 | The output was whatever the system chose at launch | **Audio settings** (⌘,): output, sample rate, block size, channels, applied live and remembered |
 | Starting a project meant finding the song elsewhere first | **Find a song online**, leading straight on to splitting |
 | Missing tools were a dead end with a command to copy | The app **installs what it needs** into its own folder |
+| Whisper mishears sung words, but lyrics are often available | **Improve with lyrics** in the Lyrics tab: words from the lyrics, timing from the recording, and undoable |
+| A crash could lose work, with recovery hidden in a menu | Backups on every save, damaged files open from their last good copy, and **recovery is offered** at startup |
 | In an empty input, **Space plays the line** just placed and stopping returns to where the next one goes |
 
 ## Keyboard map for the core loop
