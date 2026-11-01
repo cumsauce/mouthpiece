@@ -164,6 +164,7 @@ impl App {
                         }
                     });
                 });
+                card_rule(ui);
                 if device.kind == DeviceKind::Eq {
                     self.eq_curve(ui, device, width, tint);
                 }

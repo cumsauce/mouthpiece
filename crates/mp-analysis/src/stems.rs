@@ -179,24 +179,39 @@ pub fn install(cancel: &AtomicBool, on_progress: &mut dyn FnMut(&str, f32)) -> R
     std::fs::write(marker(), spec).map_err(|e| StemError::Other(e.to_string()))
 }
 
-/// The folder a song's stems go in: beside the song, or in the app's folder if that can't be written.
-pub fn output_dir(input: &Path) -> PathBuf {
+fn folder_beside(input: &Path) -> (Option<PathBuf>, PathBuf) {
     let stem = input.file_stem().map_or("song".into(), |s| s.to_string_lossy().into_owned());
     let folder = format!("{stem} stems");
-    if let Some(beside) = input.parent().map(|p| p.join(&folder)) {
-        if std::fs::create_dir_all(&beside).is_ok() {
-            return beside;
-        }
-    }
-    stems_home().join("output").join(folder)
+    (input.parent().map(|p| p.join(&folder)), stems_home().join("output").join(folder))
 }
 
-/// Stems already made from this exact file, which saves a long wait.
-pub fn existing(input: &Path, format: StemFormat) -> Option<BTreeMap<String, PathBuf>> {
-    let dir = output_dir(input);
+/// The folder a song's stems go in, creating it: beside the song, or in the app's folder if that can't be written.
+pub fn output_dir(input: &Path) -> PathBuf {
+    let (beside, fallback) = folder_beside(input);
+    match beside {
+        Some(beside) if std::fs::create_dir_all(&beside).is_ok() => beside,
+        _ => fallback,
+    }
+}
+
+const MADE_WITH: &str = "made-with.txt";
+
+/// Notes which models made a song's stems, because other models give different stems.
+fn made_with(settings: &StemSettings) -> String {
+    format!("{}\n{}\n", settings.vocal_model, settings.instrument_model)
+}
+
+/// Stems already made from this exact file with these models, which saves a long wait.
+pub fn existing(input: &Path, settings: &StemSettings) -> Option<BTreeMap<String, PathBuf>> {
+    let (beside, fallback) = folder_beside(input);
     let made_after = std::fs::metadata(input).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
-    let files: BTreeMap<String, PathBuf> = STEMS.iter().map(|n| (n.to_string(), dir.join(format!("{n}.{}", format.extension())))).collect();
-    files.values().all(|p| std::fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t >= made_after)).then_some(files)
+    beside.into_iter().chain([fallback]).find_map(|dir| {
+        if std::fs::read_to_string(dir.join(MADE_WITH)).ok()? != made_with(settings) {
+            return None;
+        }
+        let files: BTreeMap<String, PathBuf> = STEMS.iter().map(|n| (n.to_string(), dir.join(format!("{n}.{}", settings.format.extension())))).collect();
+        files.values().all(|p| std::fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t >= made_after)).then_some(files)
+    })
 }
 
 pub struct StemJob {
@@ -305,6 +320,11 @@ impl StemWorker {
         })
     }
 
+    /// Whether it's still running. A crash, as from running out of memory, ends it between jobs.
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
     /// Reads messages until `handle` has an answer, the process ends, or the job's cancelled.
     fn wait_for<T>(&mut self, cancel: &AtomicBool, handle: &mut dyn FnMut(&serde_json::Value, Option<f32>) -> Option<Result<T, StemError>>) -> Result<T, StemError> {
         const POLL: Duration = Duration::from_millis(100);
@@ -395,6 +415,7 @@ impl StemWorker {
         if let Some(missing) = STEMS.iter().find(|n| !result.get(**n).is_some_and(|p| p.is_file())) {
             return Err(StemError::Other(format!("{missing} wasn't produced")));
         }
+        let _ = std::fs::write(output.join(MADE_WITH), made_with(&job.settings));
         Ok(result)
     }
 }
@@ -428,20 +449,25 @@ mod tests {
     }
 
     #[test]
-    fn stems_are_reused_only_if_all_are_there() {
+    fn stems_are_reused_only_if_all_are_there_from_the_same_models() {
         let dir = std::env::temp_dir().join(format!("mp-stems-reuse-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("song.wav");
         std::fs::write(&input, b"x").unwrap();
-        assert!(existing(&input, StemFormat::Wav).is_none());
+        let settings = StemSettings::default();
+        assert!(existing(&input, &settings).is_none());
+        assert!(!dir.join("song stems").exists(), "looking mustn't leave a folder behind");
         let out = output_dir(&input);
         for name in STEMS {
             std::fs::write(out.join(format!("{name}.wav")), b"x").unwrap();
         }
-        assert!(existing(&input, StemFormat::Wav).is_some());
-        assert!(existing(&input, StemFormat::Flac).is_none());
+        assert!(existing(&input, &settings).is_none(), "no record of what made them");
+        std::fs::write(out.join(MADE_WITH), made_with(&settings)).unwrap();
+        assert!(existing(&input, &settings).is_some());
+        assert!(existing(&input, &StemSettings { format: StemFormat::Flac, ..settings.clone() }).is_none());
+        assert!(existing(&input, &StemSettings { vocal_model: "other.ckpt".to_string(), ..settings.clone() }).is_none());
         std::fs::remove_file(out.join("Bass.wav")).unwrap();
-        assert!(existing(&input, StemFormat::Wav).is_none());
+        assert!(existing(&input, &settings).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -6,7 +6,10 @@ use crate::panels::arranger::truncate;
 use eframe::egui::{self, Sense, Ui};
 use mp_model::TrackId;
 
-const STRIP_W: f32 = 72.0;
+const STRIP_W: f32 = 88.0;
+const BAND_H: f32 = 3.0;
+const FADER_W: f32 = 18.0;
+const METER_W: f32 = 8.0;
 
 impl App {
     pub fn mixer_panel(&mut self, ui: &mut Ui) {
@@ -18,34 +21,40 @@ impl App {
                 for (index, id) in ids.iter().enumerate() {
                     self.track_strip(ui, index, *id);
                 }
-                ui.add_space(SP_2);
+                // Master stands apart from the tracks that feed it.
+                ui.add_space(SP_3);
                 self.master_strip(ui);
             });
         });
     }
 
-    fn strip(ui: &mut Ui, selected: bool, content: impl FnOnce(&mut Ui)) {
+    fn strip(ui: &mut Ui, selected: bool, tint: egui::Color32, content: impl FnOnce(&mut Ui)) {
         let height = ui.available_height().max(100.0);
         let frame = if selected { card_frame().fill(CONTROL) } else { card_frame() };
-        frame.show(ui, |ui| {
+        let shown = frame.show(ui, |ui| {
             ui.set_width(STRIP_W - SP_4);
             ui.set_height(height - SP_4);
             ui.vertical_centered(content);
         });
+        // A strip of the track's colour along the top, which also ties it to its clips above.
+        let top = shown.response.rect;
+        let band = egui::Rect::from_min_size(top.min, egui::vec2(top.width(), BAND_H));
+        ui.painter().rect_filled(band, egui::CornerRadius { nw: R_M.nw, ne: R_M.ne, sw: 0, se: 0 }, tint);
     }
 
     fn strip_fader(&mut self, ui: &mut Ui, db: &mut f32, peaks: [f32; 2]) -> FaderOutput {
         let height = (ui.available_height() - 18.0).max(40.0);
         let output = ui
             .horizontal(|ui| {
-                ui.add_space(10.0);
-                let f = fader(ui, db, egui::vec2(16.0, height));
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(6.0, height), Sense::hover());
+                let width = FADER_W + SP_1 + METER_W;
+                ui.add_space(((ui.available_width() - width) * 0.5).max(0.0));
+                let f = fader(ui, db, egui::vec2(FADER_W, height));
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(METER_W, height), Sense::hover());
                 meter(ui.painter(), rect, peaks);
                 f
             })
             .inner;
-        ui.label(num(format!("{db:+.1}")));
+        ui.label(num(format!("{db:+.1}")).color(TEXT_3));
         output
     }
 
@@ -53,8 +62,9 @@ impl App {
         let Some(track) = self.project.track(id).cloned() else { return };
         let peaks = self.decayed_meter(index);
         let selected = self.selected_track == Some(id) && !self.master_selected;
-        Self::strip(ui, selected, |ui| {
-            let name = ui.add(egui::Label::new(strong(truncate(&track.name, 8)).color(track_color(track.color))).truncate().sense(Sense::click()));
+        Self::strip(ui, selected, track_color(track.color), |ui| {
+            ui.add_space(SP_HALF);
+            let name = ui.add(egui::Label::new(strong(truncate(&track.name, 11))).truncate().sense(Sense::click()));
             if name.clicked() {
                 self.selected_track = Some(id);
                 self.master_selected = false;
@@ -65,7 +75,7 @@ impl App {
                 self.open_track_in_editor(id);
             }
             let mut pan = track.pan as f64;
-            let r = ui.add(ValueField::new("", &mut pan, -1.0..=1.0).decimals(1).bipolar().default(0.0));
+            let r = ui.add(ValueField::new("Pan", &mut pan, -1.0..=1.0).decimals(1).bipolar().default(0.0));
             if r.changed() {
                 self.begin_gesture("Change track pan");
                 if let Some(t) = self.project.track_mut(id) {
@@ -75,7 +85,7 @@ impl App {
             }
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = SP_HALF;
-                ui.add_space(SP_2);
+                ui.add_space(((ui.available_width() - CONTROL_SM * 2.0 - SP_HALF) * 0.5).max(0.0));
                 if letter_toggle(ui, "M", track.mute, MUTE, "Mute", None).clicked() {
                     self.edit("Mute track", |p| {
                         if let Some(t) = p.track_mut(id) {
@@ -114,12 +124,13 @@ impl App {
             self.master_hold[c] = peak[c].max(self.master_hold[c] * 0.86);
         }
         let hold = self.master_hold;
-        Self::strip(ui, self.master_selected, |ui| {
+        Self::strip(ui, self.master_selected, TEXT_2, |ui| {
+            ui.add_space(SP_HALF);
             let name = ui.add(egui::Label::new(strong("Master")).sense(Sense::click()));
             if name.clicked() {
                 self.master_selected = true;
             }
-            ui.add_space(CONTROL_H + CONTROL_SM + SP_1);
+            ui.add_space(CONTROL_H + CONTROL_SM + SP_2);
             let mut db = self.project.master.gain_db;
             let f = self.strip_fader(ui, &mut db, hold);
             if f.started {

@@ -23,12 +23,13 @@ pub struct Button<'a> {
     enabled: bool,
     active: bool,
     fill_width: bool,
+    left: bool,
     tooltip: Option<(&'a str, Option<&'a str>)>,
 }
 
 impl<'a> Button<'a> {
     fn new(text: &'a str, kind: ButtonKind) -> Self {
-        Self { text, kind, icon: None, small: false, enabled: true, active: false, fill_width: false, tooltip: None }
+        Self { text, kind, icon: None, small: false, enabled: true, active: false, fill_width: false, left: false, tooltip: None }
     }
     pub fn primary(text: &'a str) -> Self {
         Self::new(text, ButtonKind::Primary)
@@ -60,6 +61,11 @@ impl<'a> Button<'a> {
         self.fill_width = true;
         self
     }
+    /// Puts the text at the left, for a full-width button that's a row in a list.
+    pub fn left(mut self) -> Self {
+        self.left = true;
+        self
+    }
     /// A tooltip, with its shortcut if it has one.
     pub fn tip(mut self, text: &'a str, shortcut: Option<&'a str>) -> Self {
         self.tooltip = Some((text, shortcut));
@@ -87,7 +93,7 @@ impl Widget for Button<'_> {
         };
         let (fill, fg) = if self.enabled { (fill, fg) } else { (mix(PANEL, fill, 0.4), TEXT_3) };
         ui.painter().rect_filled(rect, R_S, fill);
-        let mut x = rect.center().x - content * 0.5;
+        let mut x = if self.left { rect.left() + padding } else { rect.center().x - content * 0.5 };
         if let Some(icon) = self.icon {
             let icon_rect = egui::Rect::from_center_size(egui::pos2(x + 6.0, rect.center().y), egui::vec2(11.0, 11.0));
             draw_icon(ui.painter(), icon_rect, icon, fg);
@@ -415,9 +421,16 @@ pub fn text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Res
 
 /// A dropdown. Fill `add_items` with `menu_item`s.
 pub fn dropdown(ui: &mut Ui, id: &str, selected: impl Display, width: f32, add_items: impl FnOnce(&mut Ui)) {
-    egui::ComboBox::from_id_salt(id).selected_text(selected.to_string()).width(width).show_ui(ui, |ui| {
-        add_items(ui);
-    });
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected.to_string())
+        .width(width)
+        .icon(|ui, rect, _, open| {
+            let icon = egui::Rect::from_center_size(rect.center(), egui::vec2(10.0, 10.0));
+            draw_icon(ui.painter(), icon, Icon::ChevronDown, if open { TEXT } else { TEXT_3 });
+        })
+        .show_ui(ui, |ui| {
+            add_items(ui);
+        });
 }
 
 /// A button that opens a menu.

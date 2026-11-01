@@ -30,6 +30,14 @@ pub fn card_frame() -> egui::Frame {
     egui::Frame::NONE.fill(RAISED).corner_radius(R_M).inner_margin(egui::Margin::same(SP_2 as i8))
 }
 
+/// The line between a card's title row and its contents.
+pub fn card_rule(ui: &mut Ui) {
+    let y = ui.cursor().top() + SP_1;
+    let x = ui.max_rect().x_range();
+    ui.painter().hline(x, y, egui::Stroke::new(1.0, CONTROL));
+    ui.add_space(SP_2 + 1.0);
+}
+
 /// A heading that starts a group of related controls.
 pub fn section(ui: &mut Ui, title: &str) {
     ui.add_space(SP_3);
@@ -104,6 +112,18 @@ pub fn hero_state(ui: &mut Ui, rect: Rect, title: &str, text: &str, action: &str
     let at = Rect::from_min_size(egui::pos2(left, c.y + 66.0 - CONTROL_H * 0.5), egui::vec2(width, CONTROL_H));
     let other_at = Rect::from_min_size(egui::pos2(at.right() + SP_2, at.top()), egui::vec2(other_width, CONTROL_H));
     (ui.put(at, Button::primary(action)), ui.put(other_at, Button::secondary(other)))
+}
+
+/// A shortcut in a list of them, with the keys in a column so that the descriptions line up.
+pub fn shortcut_row(ui: &mut Ui, keys_text: &str, what: &str) {
+    const KEYS_W: f32 = 62.0;
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(egui::vec2(KEYS_W, CONTROL_SM), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.set_min_width(KEYS_W);
+            keycap(ui, keys_text);
+        });
+        ui.label(caption(what));
+    });
 }
 
 /// A keycap followed by what it does.

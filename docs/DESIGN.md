@@ -141,6 +141,9 @@ Every panel builds with these. Which one do you need?
 | Put controls in a row that holds tabs | `right_aligned`, against the far edge | Directly after the tabs, where they read as more tabs |
 | Show a menu | `menu_button` + `menu_item` | |
 | Mute or solo | `letter_toggle` | |
+| List shortcuts | `shortcut_row`, which lines up the descriptions | `hint_row`, which is for one or two hints |
+| Separate a card's title from its contents | `card_rule` | A raw line |
+| Make a button a row in a list | `Button::ghost(...).fill_width().left()` | |
 | Set a device's parameter | `knob` | `ValueField`, in a device |
 | Set a gain | `fader` | |
 | Show a level | `meter` | |

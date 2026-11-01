@@ -422,6 +422,9 @@ fn run_stems(queue: Receiver<StemRequest>) {
         if worker.as_ref().is_some_and(|(_, s)| s.model_dir() != settings.model_dir()) {
             worker = None;
         }
+        if worker.as_mut().is_some_and(|(w, _)| !w.is_alive()) {
+            worker = None;
+        }
         let mut running = None;
         let result = match worker.take() {
             Some(pair) => Ok(pair.0),

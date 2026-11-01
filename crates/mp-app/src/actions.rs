@@ -229,6 +229,7 @@ pub fn shortcut_text(shortcut: &KeyboardShortcut) -> String {
         Key::Num1 => "1",
         Key::Num2 => "2",
         Key::Num3 => "3",
+        Key::Comma => ",",
         other => other.name(),
     };
     s.push_str(k);
@@ -459,9 +460,13 @@ impl App {
             Action::DeleteTrack => {
                 let name = self.selected_track.and_then(|t| self.project.track(t)).map(|t| t.name.clone());
                 if let (Some(track), Some(name)) = (self.selected_track.take(), name) {
+                    let position = self.project.tracks.iter().position(|t| t.id == track).unwrap_or(0);
                     self.edit("Delete track", |p| p.remove_track(track));
                     self.selection.retain(|c| self.project.clip(*c).is_some());
-                    self.track_focus = false;
+                    // The next track takes its place, so that deleting several in a row stays quick.
+                    let next = self.project.tracks.get(position).or(self.project.tracks.last()).map(|t| t.id);
+                    self.selected_track = next;
+                    self.track_focus = next.is_some();
                     self.toast_with(ToastKind::Info, format!("Deleted {name}"), crate::app::ToastAction::Undo);
                 }
             }

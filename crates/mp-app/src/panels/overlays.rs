@@ -157,7 +157,7 @@ impl App {
                         for (_, name, shortcut, g) in ACTIONS {
                             if g == group {
                                 if let Some(s) = shortcut {
-                                    hint_row(ui, &shortcut_text(s), name);
+                                    shortcut_row(ui, &shortcut_text(s), name);
                                 }
                             }
                         }
@@ -173,13 +173,13 @@ impl App {
                     ("↑ ↓", "Choose a take"),
                     ("Esc", "Clear"),
                 ] {
-                    hint_row(ui, key, what);
+                    shortcut_row(ui, key, what);
                 }
                 ui.add_space(SP_3);
                 ui.label(strong("Mouse"));
                 ui.add_space(SP_1);
                 for line in [
-                    "⌘-scroll or pinch zooms. Shift-scroll or a horizontal swipe pans.",
+                    "Middle-drag: up and down zooms, side to side scrolls. So does ⌘-scroll or a pinch, and Shift-scroll pans.",
                     "Drag a clip's edge to trim it. ⌥-drag an edge to stretch. ⌥-drag a clip to copy it.",
                     "Drag the dots at a clip's top corners to set fades. Hold ⌘ to bypass snapping.",
                     "Double-click a clip or track to open it in the editor.",

@@ -74,7 +74,8 @@ impl App {
             self.bank.buffers.clear();
             self.runtime.clear();
             self.spectrograms.clear();
-            self.tempo_user_set = true;
+            // The tempo already found isn't to be redetected, and a project with no audio hasn't found one.
+            self.tempo_user_set |= !self.project.sources.is_empty();
             for source in &self.project.sources {
                 if source.path.exists() {
                     self.jobs.import(source.path.clone(), self.sample_rate, Some(source.id));
@@ -99,7 +100,7 @@ impl App {
     /// Reacts to the output going away, or to the system changing to another one.
     pub fn watch_audio_device(&mut self) {
         let lost = self.engine.shared.device_lost.swap(false, std::sync::atomic::Ordering::Relaxed);
-        let follows_system = self.engine.config.device.is_none();
+        let follows_system = self.engine.config.device.is_none() && self.engine.config.host.is_none();
         let system = self.system_output.lock().clone();
         let moved = follows_system && system.as_ref().is_some_and(|name| *name != self.engine.device_name);
         if lost || moved {
@@ -227,9 +228,7 @@ impl App {
             } else if block > 0 {
                 ui.label(caption(format!("Playing through {device_name}. About {:.1} ms between blocks: lower is quicker to respond, higher is safer against dropouts.", block as f32 * 1000.0 / rate as f32)));
             }
-            if config.sample_rate != self.settings.audio.sample_rate {
-                ui.label(caption("Changing the sample rate reloads the project's audio."));
-            }
+            ui.label(caption("Changing the sample rate reloads the project's audio."));
             ui.add_space(SP_4);
             ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), CONTROL_H), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 close = ui.add(Button::primary("Done")).clicked();
@@ -259,7 +258,8 @@ impl App {
     pub fn split_offer(&self) -> Option<SourceId> {
         let [source] = self.project.sources.as_slice() else { return None };
         let whole_song = source.kind == TrackKind::Music || source.has_video;
-        (whole_song && self.stems.running != Some(source.id) && !self.stems.dismissed.contains(&source.id)).then_some(source.id)
+        let on_a_track = self.project.tracks.iter().flat_map(|t| &t.clips).any(|c| c.source == source.id);
+        (whole_song && on_a_track && self.stems.running != Some(source.id) && !self.stems.dismissed.contains(&source.id)).then_some(source.id)
     }
 
     pub fn split_offer_card(&mut self, ui: &mut Ui, source: SourceId) {
@@ -314,7 +314,7 @@ impl App {
             return;
         }
         // Already done for this file, so there's nothing to wait for.
-        if let Some(files) = stems::existing(&path, self.settings.stems.format) {
+        if let Some(files) = stems::existing(&path, &self.settings.stems) {
             self.finish_stems(source, files);
             return;
         }
@@ -458,12 +458,6 @@ impl App {
         if settings != self.settings.stems {
             self.settings.stems = settings;
             self.settings.save();
-            // A finished split in the newly chosen format saves the wait.
-            let path = self.project.source(dialog.source).map(|s| s.path.clone());
-            if let Some(files) = path.and_then(|p| stems::existing(&p, self.settings.stems.format)) {
-                self.finish_stems(dialog.source, files);
-                return;
-            }
         }
         if go || less_memory {
             match dialog.setup {

@@ -676,6 +676,8 @@ impl App {
         self.compiler = GraphCompiler::default();
         self.cache = Arc::new(RenderCache::new());
         self.jobs.switch_project();
+        self.stems = Default::default();
+        self.find.split_after.clear();
         self.clipboard.clear();
         self.word_drag = None;
         self.selected_patch = None;
@@ -976,7 +978,7 @@ impl App {
             }),
         };
         let picture_file = self.project.source(source).and_then(|s| s.picture_path.clone());
-        if (is_video || picture_file.is_some()) && mp_model::video::ffmpeg_path().is_some() {
+        if (is_video || picture_file.is_some()) && !self.video.contains_key(&source) && mp_model::video::ffmpeg_path().is_some() {
             self.jobs.video_proxy(source, picture_file.unwrap_or_else(|| path.clone()));
         }
         self.bank.buffers.insert(source, audio);

@@ -47,7 +47,7 @@ pub fn knob(ui: &mut Ui, value: &mut f32, default: f32, label: &str, display: &s
     }
     painter.circle_filled(c, r - 5.0, if active { CONTROL_HOVER } else { CONTROL });
     let dir = egui::vec2(to.cos(), to.sin());
-    painter.line_segment([c + dir * (r - 10.0), c + dir * (r - 5.5)], Stroke::new(1.5, TEXT));
+    painter.line_segment([c + dir * (r - 11.0), c + dir * (r - 5.5)], Stroke::new(2.0, TEXT));
     painter.text(
         rect.center_top() + egui::vec2(0.0, 52.0),
         egui::Align2::CENTER_CENTER,

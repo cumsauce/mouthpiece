@@ -416,6 +416,10 @@ fn write<T: Copy>(cb: &mut Callback, data: &mut [T], channels: usize, first: usi
         cb.run(frames);
         for (i, frame) in chunk.chunks_mut(channels).enumerate() {
             let (l, r) = (cb.left[i], cb.right[i]);
+            if channels == 1 {
+                frame[0] = convert((l + r) * 0.5);
+                continue;
+            }
             for (c, out) in frame.iter_mut().enumerate() {
                 *out = convert(if c == first {
                     l

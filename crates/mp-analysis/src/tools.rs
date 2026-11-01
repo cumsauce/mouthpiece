@@ -61,10 +61,10 @@ pub fn locate(tool: Tool) -> Option<PathBuf> {
         Tool::Deno => own("deno"),
         Tool::Uv => own("uv").or_else(|| which("uv")),
         Tool::Ffmpeg => {
-            let ffmpeg = mp_model::video::find_ffmpeg()?;
+            let ffmpeg = mp_model::video::find_ffmpeg();
             // A test's stand-in has no ffprobe beside it, and doesn't need one.
-            let complete = std::env::var_os("MOUTHPIECE_FFMPEG").is_some() || ffmpeg.with_file_name(exe("ffprobe")).is_file();
-            complete.then_some(ffmpeg)
+            let complete = |p: &PathBuf| std::env::var_os("MOUTHPIECE_FFMPEG").is_some() || p.with_file_name(exe("ffprobe")).is_file();
+            ffmpeg.filter(complete).or_else(|| own("ffmpeg").filter(complete))
         }
     }
 }

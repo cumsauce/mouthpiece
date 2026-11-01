@@ -272,7 +272,7 @@ impl App {
                         }
                     });
                 });
-                ui.add_space(SP_1);
+                card_rule(ui);
                 ui.horizontal_top(|ui| {
                     self.knob_grid(ui, effect, params, PER_ROW, tint, "own");
                     if effect.area {
@@ -465,6 +465,10 @@ impl App {
             let selected = self.picture.selected_key == Some(i);
             let c = egui::pos2(x_key(key), y_of(key.value));
             painter.add(Shape::convex_polygon(key_diamond(c, if selected { 6.0 } else { 4.5 }), if selected { TEXT } else { tint }, Stroke::new(1.0, BASE)));
+        }
+        let motion_empty = effect.motion.get(&param).is_none_or(Motion::is_empty);
+        if motion_empty {
+            painter.text(egui::pos2(lane.left() + SP_2, lane.top() + SP_2), egui::Align2::LEFT_TOP, "Double-click to add a keyframe, or choose Beat or Follow above", font_caption(), TEXT_3);
         }
         let x = view.x(self.playhead);
         painter.line_segment([egui::pos2(x, lane.top()), egui::pos2(x, lane.bottom())], Stroke::new(1.0, ACCENT));

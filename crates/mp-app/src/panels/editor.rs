@@ -58,14 +58,16 @@ struct Chip {
 
 impl App {
     pub fn bottom_panel(&mut self, ui: &mut Ui) {
-        ui.add_space(SP_1);
-        ui.horizontal(|ui| {
-            ui.add_space(SP_2);
+        // A bar of its own, so that the tabs read as the heading of everything below them.
+        bar_frame(RAISED).inner_margin(egui::Margin::symmetric(SP_2 as i8, SP_HALF as i8)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
             tabs(ui, &mut self.bottom_tab, &[(BottomTab::Editor, "Editor"), (BottomTab::Devices, "Devices"), (BottomTab::Mixer, "Mixer")]);
             // Controls keep to the far side, so that the tab row reads as only tabs.
             if self.bottom_tab == BottomTab::Editor {
                 right_aligned(ui, "editor-toolbar", |ui| self.editor_toolbar(ui));
             }
+            });
         });
         ui.add_space(SP_1);
         match self.bottom_tab {

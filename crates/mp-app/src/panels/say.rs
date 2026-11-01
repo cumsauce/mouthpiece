@@ -91,7 +91,9 @@ impl App {
             return;
         }
         tabs(ui, &mut self.say.tab, &[(SayTab::Say, "Say"), (SayTab::Lyrics, "Lyrics"), (SayTab::Changes, "Changes"), (SayTab::Words, "Words"), (SayTab::Sources, "Files")]);
-        ui.add_space(SP_2);
+        let rule = ui.cursor().top() + 1.0;
+        ui.painter().hline(ui.max_rect().x_range(), rule, Stroke::new(1.0, CONTROL));
+        ui.add_space(SP_3);
         if self.say.dirty {
             self.replan();
         }
@@ -321,7 +323,7 @@ impl App {
                 } else {
                     section(ui, "Recent lines");
                     for line in self.say.recent.clone() {
-                        if ui.add(Button::ghost(&truncate(&line, 40)).small().tip("Use this line again", None)).clicked() {
+                        if ui.add(Button::ghost(&truncate(&line, 44)).small().fill_width().left().tip("Use this line again", None)).clicked() {
                             self.say.text = line;
                             self.say.dirty = true;
                             self.say.focus_input = true;
