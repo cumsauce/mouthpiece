@@ -1,0 +1,23 @@
+[package]
+name = "mp-analysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["whisper"]
+whisper = ["dep:whisper-rs"]
+
+[dependencies]
+mp-dsp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustfft.workspace = true
+symphonia = { version = "0.6", features = ["all"] }
+ureq = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"], optional = true }
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+whisper-rs = { version = "0.16", optional = true }
+

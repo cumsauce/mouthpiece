@@ -1,0 +1,15 @@
+[package]
+name = "mp-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mp-model.workspace = true
+mp-dsp.workspace = true
+mp-engine.workspace = true
+mp3lame-encoder = "0.2.5"
+hound = "3.5"
+
+[dev-dependencies]
+mp-analysis.workspace = true
