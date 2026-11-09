@@ -72,6 +72,28 @@ pub struct SoundCandidate {
     pub same_after: bool,
 }
 
+/// A run of sounds in the recordings that matches part of a word being made.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundRun {
+    pub hit: Hit,
+    /// Where in the wanted sounds it starts, and how many it covers.
+    pub at: usize,
+    pub len: usize,
+    /// The sounds just outside it where it was said. `None` is a pause.
+    pub before: Option<String>,
+    pub after: Option<String>,
+    /// Whether it begins a word, and ends one, where it was said.
+    pub starts_word: bool,
+    pub ends_word: bool,
+    /// How many gaps between words it runs across.
+    pub crosses: usize,
+    /// Its shortest sound in seconds. Very short ones are usually where alignment went wrong.
+    pub shortest: f64,
+}
+
+/// Words closer than this run into each other, so sounds can be taken across them.
+const CONNECTED: f64 = 0.03;
+
 struct Entry {
     source: u64,
     word_index: usize,
@@ -277,6 +299,68 @@ impl WordIndex {
             }
         }
         hits
+    }
+
+    /// Every run of up to `longest` sounds that matches part of `wanted`, including runs across words
+    /// said without a pause, with what surrounds each one.
+    pub fn sound_runs(&self, wanted: &[String], longest: usize) -> Vec<SoundRun> {
+        let mut out = Vec::new();
+        let mut sources: Vec<u64> = self.transcripts.keys().copied().collect();
+        sources.sort_unstable();
+        for source in sources {
+            let words = &self.transcripts[&source].words;
+            // Every sound in order, and whether each runs straight into the next.
+            let mut stream: Vec<(usize, usize)> = Vec::new();
+            let mut joined: Vec<bool> = Vec::new();
+            for (w, word) in words.iter().enumerate() {
+                for p in 0..word.phonemes.len() {
+                    if let Some(last) = joined.last_mut() {
+                        *last = p > 0 || words.get(w.wrapping_sub(1)).is_some_and(|before| word.start - before.end <= CONNECTED);
+                    }
+                    stream.push((w, p));
+                    joined.push(false);
+                }
+            }
+            let symbol = |k: usize| words[stream[k].0].phonemes[stream[k].1].symbol.as_str();
+            for k in 0..stream.len() {
+                for at in 0..wanted.len() {
+                    let mut len = 0;
+                    while len < longest && at + len < wanted.len() && k + len < stream.len() && symbol(k + len) == wanted[at + len] && (len == 0 || joined[k + len - 1]) {
+                        len += 1;
+                        let last = k + len - 1;
+                        let ((first_word, first_phoneme), (last_word, last_phoneme)) = (stream[k], stream[last]);
+                        let (first, end) = (&words[first_word], &words[last_word]);
+                        let shortest = (k..=last).map(|s| {
+                            let p = &words[stream[s].0].phonemes[stream[s].1];
+                            p.end - p.start
+                        });
+                        let text: Vec<&str> = (first_word..=last_word).map(|w| words[w].text.as_str()).collect();
+                        out.push(SoundRun {
+                            hit: Hit {
+                                source,
+                                start: first.phonemes[first_phoneme].start,
+                                end: end.phonemes[last_phoneme].end,
+                                text: wanted[at..at + len].join(" "),
+                                context: Some(text.join(" ")),
+                                kind: HitKind::Phonemes,
+                                confidence: (first_word..=last_word).map(|w| words[w].confidence).fold(1.0, f32::min),
+                                pitch_hz: first.pitch_hz.or(end.pitch_hz),
+                                word_index: first_word,
+                            },
+                            at,
+                            len,
+                            before: (k > 0 && joined[k - 1]).then(|| symbol(k - 1).to_string()),
+                            after: joined[last].then(|| symbol(last + 1).to_string()),
+                            starts_word: first_phoneme == 0,
+                            ends_word: last_phoneme + 1 == end.phonemes.len(),
+                            crosses: last_word - first_word,
+                            shortest: shortest.fold(f64::INFINITY, f64::min),
+                        });
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Every occurrence of a sound, best fit first, for filling a gap in a word. A sound depends on

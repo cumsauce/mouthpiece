@@ -102,13 +102,16 @@ makes the same packages that CI does, in `dist/`.
 | `/k ae t/` | A sound anywhere, even inside other words |
 | `~cat` | Words that rhyme |
 
-Press `/` to start typing from anywhere. In the input, Tab moves between words, ↑ and ↓ choose takes,
-and Shift+Return previews the line. The Transcript tab shows the lyrics: click a word to hear it, or double-click
+Press `/` to start typing from anywhere. The takes shown are for the word the cursor is in. Tab selects the next word so
+typing replaces it, ↑ and ↓ choose takes, and Shift+Return previews the line. After placing a line, ↑ brings it back:
+change a word and press Return, and it replaces the line where it is. The Transcript tab shows the lyrics: click a word to hear it, or double-click
 to add it to your line.
 
 ### Making words that don't exist
 
-Type a word that was never said and it's stitched from sounds, as a group of clips that are already blended. Click
+Type a word that was never said and it's stitched from sounds, as a group of clips that are already blended. It prefers
+sounds said with the same sounds around them, cuts at consonants rather than inside vowels, and keeps the pitch even.
+↑ and ↓ try the next best ways to build it. Click
 a piece of the group to adjust it, or drag a clip's name strip in the editor. Clips moved along a track crossfade
 for as long as they partly overlap, and `X` blends any selection. When it sounds right, press `⇧W` to name it. After
 that, typing its name uses it, and it's listed under My words.

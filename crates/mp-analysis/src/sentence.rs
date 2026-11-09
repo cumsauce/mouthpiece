@@ -3,7 +3,7 @@
 //! It prefers runs of consecutive words from the original recording because they keep their natural
 //! flow, then single takes, then stitches words nobody ever said out of phonemes.
 
-use crate::search::{Hit, HitKind, WordIndex};
+use crate::search::{Hit, HitKind, SoundRun, WordIndex};
 use crate::{g2p, normalize_word};
 
 /// How a part of the sentence will be sourced.
@@ -29,9 +29,34 @@ pub struct SentencePart {
     /// and stitching, because someone who made a word has already said what it should sound like.
     pub made: Option<u64>,
     pub use_made: bool,
+    /// Other ways to stitch the word, for `PartSource::Stitched`. `options` is the one chosen.
+    pub stitches: Vec<Vec<Hit>>,
 }
 
 impl SentencePart {
+    pub fn new(text: String, source: PartSource, options: Vec<Hit>) -> Self {
+        Self { text, source, options, selected: 0, made: None, use_made: false, stitches: Vec::new() }
+    }
+
+    /// How many versions there are to choose between: takes, or ways to stitch it.
+    pub fn choices(&self) -> usize {
+        match self.source {
+            PartSource::Takes => self.options.len(),
+            PartSource::Stitched => self.stitches.len(),
+            PartSource::Missing => 0,
+        }
+    }
+
+    /// Chooses a take, or a way to stitch it.
+    pub fn choose(&mut self, i: usize) {
+        self.selected = i.min(self.choices().saturating_sub(1));
+        if self.source == PartSource::Stitched {
+            if let Some(pieces) = self.stitches.get(self.selected) {
+                self.options = pieces.clone();
+            }
+        }
+    }
+
     /// Audio pieces to place on the timeline, in order.
     pub fn pieces(&self) -> Vec<&Hit> {
         if self.use_made {
@@ -95,7 +120,7 @@ pub fn plan(text: &str, index: &WordIndex) -> Vec<SentencePart> {
             let mut hits = index.find_connected_phrase(&phrase);
             if !hits.is_empty() {
                 hits.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
-                parts.push(SentencePart { text: phrase, source: PartSource::Takes, options: hits, selected: 0, made: None, use_made: false });
+                parts.push(SentencePart::new(phrase, PartSource::Takes, hits));
                 i += len;
                 matched = true;
                 break;
@@ -107,11 +132,14 @@ pub fn plan(text: &str, index: &WordIndex) -> Vec<SentencePart> {
         let word = &words[i];
         let takes = index.takes_of(word);
         if !takes.is_empty() {
-            parts.push(SentencePart { text: word.clone(), source: PartSource::Takes, options: takes, selected: 0, made: None, use_made: false });
+            parts.push(SentencePart::new(word.clone(), PartSource::Takes, takes));
         } else {
-            let pieces = stitch(word, index);
-            let source = if pieces.is_empty() { PartSource::Missing } else { PartSource::Stitched };
-            parts.push(SentencePart { text: word.clone(), source, options: pieces, selected: 0, made: None, use_made: false });
+            let stitches = stitches(word, index);
+            let source = if stitches.is_empty() { PartSource::Missing } else { PartSource::Stitched };
+            let mut part = SentencePart::new(word.clone(), source, Vec::new());
+            part.stitches = stitches;
+            part.choose(0);
+            parts.push(part);
         }
         i += 1;
     }
@@ -142,25 +170,145 @@ fn choose_takes(parts: &mut [SentencePart]) {
     }
 }
 
-/// Builds a word out of the longest phoneme runs available. Returns empty if any sound is missing.
-pub fn stitch(word: &str, index: &WordIndex) -> Vec<Hit> {
-    let symbols = g2p::phonemes(word);
-    let mut pieces = Vec::new();
-    let mut at = 0;
-    while at < symbols.len() {
-        let mut best: Option<(usize, Hit)> = None;
-        for len in (1..=symbols.len() - at).rev() {
-            let hits = index.find_phonemes(&symbols[at..at + len]);
-            if let Some(hit) = hits.into_iter().max_by(|a, b| a.confidence.total_cmp(&b.confidence)) {
-                best = Some((len, hit));
-                break;
+/// Ways to build a word out of sounds from other words, best first. Empty if any sound is missing.
+///
+/// This is unit selection, as in concatenative speech synthesis. A sound is coloured by the ones
+/// around it, so a piece fits best where it was said with the same neighbours, or at the start or end
+/// of a word when it starts or ends this one. Every piece is a join, and joins are least audible at a
+/// stop or a hiss, where the sound is quiet or noisy anyway, and most audible inside a vowel. A pitch
+/// jump between pieces is heard too. The cheapest path through all of that is the first version, and
+/// the others are found by making the pieces already used dearer.
+pub fn stitches(word: &str, index: &WordIndex) -> Vec<Vec<Hit>> {
+    const VERSIONS: usize = 5;
+    let mut found: Vec<(f32, Vec<Hit>)> = Vec::new();
+    // Variants that differed only in stress are the same once stress is gone.
+    let mut pronunciations: Vec<Vec<String>> = Vec::new();
+    for p in g2p::pronunciations(word) {
+        if !p.is_empty() && !pronunciations.contains(&p) {
+            pronunciations.push(p);
+        }
+    }
+    for symbols in pronunciations {
+        let runs = best_runs(index.sound_runs(&symbols, symbols.len()), &symbols);
+        let mut used = vec![0u32; runs.len()];
+        for _ in 0..VERSIONS {
+            let Some((cost, path)) = cheapest_path(&runs, &symbols, &used) else { break };
+            for &r in &path {
+                used[r] += 1;
+            }
+            let pieces: Vec<Hit> = path.iter().map(|&r| runs[r].0.hit.clone()).collect();
+            if !found.iter().any(|(_, f)| *f == pieces) {
+                found.push((cost, pieces));
             }
         }
-        let Some((len, hit)) = best else { return Vec::new() };
-        pieces.push(hit);
-        at += len;
     }
-    pieces
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    found.truncate(VERSIONS);
+    found.into_iter().map(|(_, pieces)| pieces).collect()
+}
+
+/// How loud and open a sound is. Joins go best where it's low.
+fn sonority(symbol: &str) -> f32 {
+    use g2p::PhonemeClass::*;
+    match g2p::class_of(symbol) {
+        UnvoicedStop | VoicedStop | Affricate => 0.0,
+        UnvoicedFricative => 1.0,
+        VoicedFricative => 2.0,
+        Nasal => 3.0,
+        Glide => 4.0,
+        Vowel => 5.0,
+    }
+}
+
+/// What it costs for a piece to have `got` beside it where `want` should be. `None` is a pause, or the
+/// edge of the word being made.
+fn edge_cost(want: Option<&String>, got: Option<&String>, at_word_edge: bool) -> f32 {
+    match (want, got) {
+        (None, None) => 0.0,
+        // Words run together in speech, so the edge of a word is nearly as clean as a pause.
+        (None, Some(_)) if at_word_edge => 0.15,
+        (None, Some(_)) => 0.6,
+        (Some(w), Some(g)) if w == g => 0.0,
+        (Some(w), Some(g)) if g2p::class_of(w) == g2p::class_of(g) => 0.25,
+        (Some(_), None) => 0.35,
+        (Some(_), Some(_)) => 0.5,
+    }
+}
+
+/// What a piece costs on its own, lower being better.
+fn run_cost(run: &SoundRun, symbols: &[String]) -> f32 {
+    const JOIN: f32 = 1.0;
+    let before = run.at.checked_sub(1).map(|i| &symbols[i]);
+    let after = symbols.get(run.at + run.len);
+    let mut cost = JOIN + edge_cost(before, run.before.as_ref(), run.starts_word) + edge_cost(after, run.after.as_ref(), run.ends_word);
+    cost += (1.0 - run.hit.confidence) * 0.6 + run.crosses as f32 * 0.25;
+    // Alignment that collapsed a sound to almost nothing has probably put its edges in the wrong place.
+    if run.shortest < 0.025 {
+        cost += 0.6;
+    }
+    cost
+}
+
+/// The best few runs for each stretch of the word, each with its cost. Keeping only a few keeps this
+/// quick enough to run on every key press.
+fn best_runs(runs: Vec<SoundRun>, symbols: &[String]) -> Vec<(SoundRun, f32)> {
+    const KEEP: usize = 12;
+    let mut costed: Vec<(SoundRun, f32)> = runs.into_iter().map(|r| {
+        let cost = run_cost(&r, symbols);
+        (r, cost)
+    }).collect();
+    costed.sort_by(|a, b| (a.0.at, a.0.len).cmp(&(b.0.at, b.0.len)).then(a.1.total_cmp(&b.1)));
+    let mut kept: Vec<(SoundRun, f32)> = Vec::new();
+    for run in costed {
+        let same = kept.iter().rev().take_while(|k| (k.0.at, k.0.len) == (run.0.at, run.0.len)).count();
+        if same < KEEP {
+            kept.push(run);
+        }
+    }
+    kept
+}
+
+/// What joining `b` after `a` costs: where the cut falls, and how far the pitch jumps.
+fn join_cost(a: &SoundRun, b: &SoundRun, symbols: &[String]) -> f32 {
+    let cut = sonority(&symbols[b.at - 1]).min(sonority(&symbols[b.at])) * 0.1;
+    let leap = match (a.hit.pitch_hz, b.hit.pitch_hz) {
+        (Some(x), Some(y)) => (12.0 * (y / x).log2()).abs() / 12.0 * 0.6,
+        _ => 0.0,
+    };
+    cut + leap
+}
+
+/// The cheapest way through the word, as indices into `runs`. `used` makes runs already in another
+/// version dearer, so that the next version differs.
+fn cheapest_path(runs: &[(SoundRun, f32)], symbols: &[String], used: &[u32]) -> Option<(f32, Vec<usize>)> {
+    const REUSE: f32 = 0.8;
+    let n = symbols.len();
+    let mut best: Vec<Option<(f32, Option<usize>)>> = vec![None; runs.len()];
+    let mut ending_at: Vec<Vec<usize>> = vec![Vec::new(); n + 1];
+    // Runs are sorted by where they start, so everything a run can follow has been worked out first.
+    for (k, (run, cost)) in runs.iter().enumerate() {
+        let own = cost + used[k] as f32 * REUSE;
+        best[k] = if run.at == 0 {
+            Some((own, None))
+        } else {
+            ending_at[run.at]
+                .iter()
+                .filter_map(|&m| best[m].map(|(so_far, _)| (so_far + join_cost(&runs[m].0, run, symbols) + own, Some(m))))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+        };
+        if best[k].is_some() {
+            ending_at[run.at + run.len].push(k);
+        }
+    }
+    let end = *ending_at[n].iter().min_by(|a, b| best[**a].expect("reachable").0.total_cmp(&best[**b].expect("reachable").0))?;
+    let mut path = vec![end];
+    while let Some(Some(previous)) = best[*path.last().expect("not empty")].map(|b| b.1) {
+        path.push(previous);
+    }
+    path.reverse();
+    // The cost without the reuse penalty, so versions from different pronunciations compare fairly.
+    let real = path.iter().map(|&k| runs[k].1).sum::<f32>() + path.windows(2).map(|w| join_cost(&runs[w[0]].0, &runs[w[1]].0, symbols)).sum::<f32>();
+    Some((real, path))
 }
 
 #[cfg(test)]
@@ -212,6 +360,45 @@ mod tests {
         let pieces = parts[0].pieces();
         let spelled: Vec<&str> = pieces.iter().map(|h| h.text.as_str()).collect();
         assert_eq!(spelled, ["k", "ae t"]);
+    }
+
+    fn spelled(pieces: &[Hit]) -> Vec<&str> {
+        pieces.iter().map(|h| h.text.as_str()).collect()
+    }
+
+    #[test]
+    fn stitching_cuts_at_a_stop_rather_than_into_a_vowel() {
+        // "mat" is "m" + "ae t" or "m ae" + "t". Cutting before the "t" hides the join in its closure.
+        let idx = index("mad pat");
+        let parts = plan("mat", &idx);
+        assert_eq!(spelled(&parts[0].options), ["m ae", "t"]);
+    }
+
+    #[test]
+    fn stitching_takes_sounds_across_words_said_together() {
+        let idx = connected_index("black at");
+        let parts = plan("cat", &idx);
+        assert_eq!(spelled(&parts[0].options), ["k ae t"]);
+        assert_eq!(parts[0].options[0].context.as_deref(), Some("black at"));
+    }
+
+    #[test]
+    fn stitching_never_runs_across_a_pause() {
+        // In the test index, words start a second apart, so "black" and "at" aren't joined.
+        let idx = index("black at");
+        let parts = plan("cat", &idx);
+        assert_eq!(spelled(&parts[0].options), ["k", "ae t"]);
+    }
+
+    #[test]
+    fn a_stitched_word_offers_other_versions() {
+        let idx = index("mad pat mud kit");
+        let mut part = plan("mat", &idx).remove(0);
+        assert!(part.choices() >= 2, "{:?}", part.stitches);
+        let first = part.options.clone();
+        part.choose(1);
+        assert_ne!(part.options, first);
+        assert_eq!(part.pieces().len(), part.options.len());
     }
 
     #[test]

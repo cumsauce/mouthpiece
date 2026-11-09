@@ -97,6 +97,8 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
   - **Crossfades you can hear while dragging.** Overlapping two clips fades one into the other for as long as
     they overlap, and pulling them apart undoes it. That's for a clip moved along its own track and partly over
     a neighbour. Dropped anywhere else, a clip cuts a space for itself in what's under it.
+  - **A good first attempt.** Pieces that were said with the same sounds around them, joins at consonants
+    rather than inside vowels, and pitch that doesn't jump. Other attempts one key away.
   - **A library.** Saved words come first in Say and are listed in My words.
   - **A way back, always.** Recordings are never changed. Saved words are never changed by editing a placed
     copy. "Revert to saved" and "Restore original" go back from any experiment.
@@ -204,6 +206,9 @@ Each job has a budget. A budget is a test: if the interface misses it, the inter
 | Whisper mishears sung words, but lyrics are often available | **Improve with lyrics** in the Lyrics tab: words from the lyrics, timing from the recording, and undoable |
 | A crash could lose work, with recovery hidden in a menu | Backups on every save, damaged files open from their last good copy, and **recovery is offered** at startup |
 | In an empty input, **Space plays the line** just placed and stopping returns to where the next one goes |
+| The takes shown were always the last word's, so changing an earlier word meant deleting back to it | The takes shown are for **the word the cursor is in**. Tab selects a whole word to retype, and clicking a word does too |
+| Fixing a word in a line already placed meant undo, retype the line, place again | **↑ brings the line back**, takes and all, and Return replaces it where it is, even if it was moved |
+| Stitching took the longest run of sounds it could find, wherever it came from, so pieces carried the wrong sounds at their edges | Stitching weighs **every way to build the word**: neighbouring sounds, word edges, where the cut falls and pitch. ↑ ↓ try the next best |
 
 ## Keyboard map for the core loop
 
@@ -214,9 +219,11 @@ Esc puts everything back.
 |---|---|---|
 | Return | Place the line at the playhead | Stop and return |
 | Shift+Return | Preview the line | |
-| Tab / Shift+Tab | Next or previous word | |
-| ↑ ↓ | Previous or next take of that word | Pitch up or down |
-| Esc | Clear the input | Deselect |
+| Tab / Shift+Tab | Select the next or previous word, so typing replaces it | |
+| ↑ ↓ | Previous or next take of that word, or way of stitching it | Pitch up or down |
+| ↑ in an empty input | Bring back the line just placed. Return then replaces it | |
+| ⌥⌫ | Delete a word | |
+| Esc | Clear the input, or leave the line as it was | Deselect |
 | T / Shift+T | | Next or previous take of the clip |
 | P | | Tune to key |
 | Q | | Quantize |

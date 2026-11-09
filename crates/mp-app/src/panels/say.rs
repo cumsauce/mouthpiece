@@ -42,7 +42,23 @@ pub struct SayState {
     pub trial_last: Option<usize>,
     /// Lines placed this session, newest first.
     pub recent: Vec<String>,
+    /// The words of the input each part of the plan covers, counting only words with letters in.
+    pub part_words: Vec<std::ops::Range<usize>>,
+    /// The last line placed, which ↑ in an empty input brings back to change.
+    pub last_line: Option<PlacedLine>,
+    /// Set while the input holds that line again, so that placing it replaces it.
+    pub revising: Option<PlacedLine>,
+    /// Where the text cursor was, so the plan only follows it when it moves.
+    caret: Option<(usize, usize)>,
     similar: (String, Vec<String>),
+}
+
+/// A line on the timeline, and how it was made, so that it can be changed in place.
+#[derive(Clone)]
+pub struct PlacedLine {
+    pub text: String,
+    pub plan: Vec<SentencePart>,
+    pub clips: Vec<mp_model::ClipId>,
 }
 
 impl Default for SayState {
@@ -62,6 +78,10 @@ impl Default for SayState {
             word_selection: None,
             trial_last: None,
             recent: Vec::new(),
+            part_words: Vec::new(),
+            last_line: None,
+            revising: None,
+            caret: None,
             similar: (String::new(), Vec::new()),
         }
     }
@@ -116,24 +136,78 @@ impl App {
         }
         let query = self.say.text.trim().to_string();
         let old = std::mem::take(&mut self.say.plan);
-        self.say.plan = if query.starts_with('/') || query.starts_with('~') {
+        let words = word_spans(&self.say.text).len();
+        if query.starts_with('/') || query.starts_with('~') {
             let options = self.index.search(&query, RESULT_LIMIT);
             let source = if options.is_empty() { PartSource::Missing } else { PartSource::Takes };
-            vec![SentencePart { text: query, source, options, selected: 0, made: None, use_made: false }]
+            self.say.plan = vec![SentencePart::new(query, source, options)];
+            self.say.part_words = vec![0..words];
         } else {
             let mut plan = sentence::plan(&query, &self.index);
             self.mark_made_words(&mut plan);
             for part in &mut plan {
                 if let Some(previous) = old.iter().find(|p| p.text == part.text && p.source == part.source) {
-                    part.selected = previous.selected.min(part.options.len().saturating_sub(1));
+                    part.choose(previous.selected);
                     if part.made.is_some() && previous.made.is_some() {
                         part.use_made = previous.use_made;
                     }
                 }
             }
-            plan
-        };
+            self.say.part_words = consecutive_words(&plan);
+            self.say.plan = plan;
+        }
         self.say.focus = self.say.focus.min(self.say.plan.len().saturating_sub(1));
+    }
+
+    /// Where a part of the plan is in the input, in characters.
+    fn part_span(&self, part: usize) -> Option<(usize, usize)> {
+        let words = self.say.part_words.get(part)?;
+        let spans = word_spans(&self.say.text);
+        Some((spans.get(words.start)?.0, spans.get(words.end.checked_sub(1)?)?.1))
+    }
+
+    /// The part of the plan the text cursor is in, or the one just before it.
+    fn part_at(&self, caret: usize) -> Option<usize> {
+        let spans = word_spans(&self.say.text);
+        let word = spans.iter().position(|s| caret <= s.1).unwrap_or(spans.len().checked_sub(1)?);
+        self.say.part_words.iter().position(|w| w.contains(&word))
+    }
+
+    /// Selects a part's words in the input, so that typing replaces them.
+    fn select_part_text(&mut self, ctx: &egui::Context, part: usize) {
+        let Some((from, to)) = self.part_span(part) else { return };
+        let mut state = egui::TextEdit::load_state(ctx, input_id()).unwrap_or_default();
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(from), egui::text::CCursor::new(to))));
+        egui::TextEdit::store_state(ctx, input_id(), state);
+        self.say.caret = Some((from, to));
+        self.say.focus_input = true;
+        ctx.request_repaint();
+    }
+
+    /// Brings back the line placed last, so that changing a word in it replaces what's on the timeline.
+    fn recall_last_line(&mut self) -> bool {
+        let Some(line) = self.say.last_line.clone() else { return false };
+        if !line.clips.iter().any(|c| self.project.clip(*c).is_some()) {
+            return false;
+        }
+        self.say.text = line.text.clone();
+        // The old plan keeps the takes that were chosen.
+        self.say.plan = line.plan.clone();
+        self.say.revising = Some(line);
+        self.say.dirty = true;
+        self.say.caret = None;
+        let end = self.say.text.chars().count();
+        let mut state = egui::TextEdit::load_state(&self.ctx, input_id()).unwrap_or_default();
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(end))));
+        egui::TextEdit::store_state(&self.ctx, input_id(), state);
+        true
+    }
+
+    pub fn stop_revising(&mut self) {
+        if self.say.revising.take().is_some() {
+            self.say.text.clear();
+            self.say.dirty = true;
+        }
     }
 
     /// A word you made takes priority over anything found or stitched.
@@ -149,6 +223,7 @@ impl App {
     fn say_tab(&mut self, ui: &mut Ui) {
         self.say_status(ui);
         self.rewrite_header(ui);
+        self.revising_header(ui);
         self.say_input(ui);
         ui.add_space(SP_2);
         if self.say.rewrite.is_some() {
@@ -181,6 +256,25 @@ impl App {
             self.focused_part(ui);
         });
         self.say_footer(ui);
+    }
+
+    /// Says that placing will replace the line on the timeline rather than add another.
+    fn revising_header(&mut self, ui: &mut Ui) {
+        if self.say.revising.is_none() {
+            return;
+        }
+        card_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(caption("Changing the line you placed. Return replaces it."));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(IconButton::new(Icon::Close, "Leave it as it is").shortcut("Esc").small()).clicked() {
+                        self.stop_revising();
+                    }
+                });
+            });
+        });
+        ui.add_space(SP_2);
     }
 
     /// What's happening with the words, and the one thing to do about it if there's a problem.
@@ -240,9 +334,12 @@ impl App {
             }
             if count > 0 && (prev_word || next_word) {
                 self.say.focus = if next_word { (self.say.focus + 1) % count } else { (self.say.focus + count - 1) % count };
+                self.select_part_text(ui.ctx(), self.say.focus);
                 self.audition_focused();
             }
-            if up || down {
+            // ↑ in an empty input brings the last line back, to change a word in it.
+            let recalled = up && self.say.text.trim().is_empty() && self.say.rewrite.is_none() && self.recall_last_line();
+            if (up || down) && !recalled {
                 self.step_focused_take(if down { 1 } else { -1 });
             }
             let rewriting = self.say.rewrite.is_some();
@@ -255,6 +352,8 @@ impl App {
             if escape {
                 if rewriting {
                     self.cancel_rewrite();
+                } else if self.say.revising.is_some() {
+                    self.stop_revising();
                 } else if self.say.text.is_empty() {
                     ui.memory_mut(|m| m.surrender_focus(id));
                 } else {
@@ -274,7 +373,8 @@ impl App {
                         .frame(egui::Frame::NONE)
                         .font(font_input())
                         .return_key(None)
-                        .lock_focus(true)
+                        // Escape is handled above, so egui mustn't take the focus away first.
+                        .event_filter(egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true })
                         .desired_rows(2)
                         .desired_width(f32::INFINITY)
                         .hint_text(if self.say.rewrite.is_some() { "Edit the words" } else { "Type what they should say" }),
@@ -282,8 +382,24 @@ impl App {
             })
             .inner;
         if edit.changed() {
-            self.say.focus = self.say.plan.len().saturating_sub(1);
             self.say.dirty = true;
+            if self.say.text.trim().is_empty() {
+                self.say.revising = None;
+            }
+        }
+        // The word being typed or edited is the one whose takes are shown.
+        let caret = egui::TextEdit::load_state(ui.ctx(), id).and_then(|s| s.cursor.char_range()).map(|r| {
+            let (a, b) = (r.primary.index.0, r.secondary.index.0);
+            (a.min(b), a.max(b))
+        });
+        if edit.has_focus() && caret.is_some() && (caret != self.say.caret || edit.changed()) {
+            self.say.caret = caret;
+            if self.say.dirty {
+                self.replan();
+            }
+            if let Some(part) = caret.and_then(|(_, to)| self.part_at(to)) {
+                self.say.focus = part;
+            }
         }
         if self.say.focus_input {
             edit.request_focus();
@@ -310,8 +426,11 @@ impl App {
             if self.index.word_count() > 0 {
                 if !self.selection.is_empty() && !self.engine.is_playing() {
                     hint_row(ui, "Space", "Hear that line with the music");
-                    ui.add_space(SP_2);
                 }
+                if self.say.last_line.as_ref().is_some_and(|l| l.clips.iter().any(|c| self.project.clip(*c).is_some())) {
+                    hint_row(ui, "↑", "Change the line you just placed");
+                }
+                ui.add_space(SP_2);
                 let count = self.index.word_count();
                 ui.label(caption(format!("{count} word{} ready. Type a line, or find one in the lyrics.", if count == 1 { "" } else { "s" })));
                 ui.add_space(SP_1);
@@ -397,7 +516,7 @@ impl App {
         let focused = i == self.say.focus;
         let (color, tip_text) = if part.use_made { (GOOD, "A word you made. ↑ and ↓ try other takes.") } else { match part.source {
             PartSource::Takes => (TEXT_3, "Click to hear. Tab moves between words."),
-            PartSource::Stitched => (WARN, "Never said as a word, so it's stitched from sounds."),
+            PartSource::Stitched => (WARN, "Never said as a word, so it's stitched from sounds. ↑ and ↓ try other ways."),
             PartSource::Missing => (BAD, "Nothing recorded can make this."),
         } };
         let fill = if focused { CONTROL_HOVER } else if response.hovered() { CONTROL } else { RAISED };
@@ -410,6 +529,7 @@ impl App {
         tip(response, tip_text, None);
         if clicked {
             self.say.focus = i;
+            self.select_part_text(ui.ctx(), i);
             self.audition_focused();
         }
     }
@@ -431,9 +551,9 @@ impl App {
         // A made word sits above the takes in the list, so the keys walk from one into the other.
         if part.made.is_some() {
             if part.use_made {
-                if delta > 0 && part.source == PartSource::Takes && !part.options.is_empty() {
+                if delta > 0 && part.choices() > 0 {
                     part.use_made = false;
-                    part.selected = 0;
+                    part.choose(0);
                 }
                 self.audition_focused();
                 return;
@@ -444,11 +564,11 @@ impl App {
                 return;
             }
         }
-        if part.source != PartSource::Takes || part.options.is_empty() {
+        let n = part.choices() as i32;
+        if n == 0 {
             return;
         }
-        let n = part.options.len() as i32;
-        part.selected = (part.selected as i32 + delta).rem_euclid(n) as usize;
+        part.choose((part.selected as i32 + delta).rem_euclid(n) as usize);
         self.audition_focused();
     }
 
@@ -465,7 +585,9 @@ impl App {
                 ui.label(caption(format!("{n} take{} of \"{}\"", if n == 1 { "" } else { "s" }, part.text)));
             }
             PartSource::Stitched => {
-                ui.label(caption(format!("\"{}\" isn't in the recordings. Stitched from sounds:", part.text)));
+                let versions = part.stitches.len();
+                let which = if versions > 1 { format!(" Version {} of {versions}, ↑ and ↓ for others.", part.selected + 1) } else { String::new() };
+                ui.label(caption(format!("\"{}\" is stitched from these sounds.{which}", part.text)));
             }
             PartSource::Missing => {
                 if part.made.is_none() {
@@ -693,7 +815,7 @@ impl App {
             if ui.add(Button::secondary("Preview").enabled(has_audio).tip("Hear the line before placing it", Some("⇧Return"))).clicked() {
                 self.preview_line();
             }
-            let place = format!("Place at {}", format_bars(&self.project, self.playhead));
+            let place = if self.say.revising.is_some() { "Replace the line".to_string() } else { format!("Place at {}", format_bars(&self.project, self.playhead)) };
             if ui.add(Button::primary(&place).enabled(has_audio).tip("Put the line on the timeline", Some("Return"))).clicked() {
                 self.place_sentence();
             }
@@ -790,9 +912,16 @@ impl App {
         let gap = self.say.gap_ms * 0.001;
         let quantize = self.say.quantize_words;
         let grid = self.grid_division;
-        let at = self.playhead;
-        let (clips, end, track) = self.edit("Place line", |p| {
-            let track = App::sentence_track(p);
+        // A line brought back with ↑ replaces itself, wherever it's been moved to.
+        let old: Vec<mp_model::ClipId> = self.say.revising.take().map(|r| r.clips).unwrap_or_default().into_iter().filter(|c| self.project.clip(*c).is_some()).collect();
+        let replacing = !old.is_empty();
+        let at = old.iter().filter_map(|c| self.project.clip(*c)).map(|c| c.start).reduce(f64::min).unwrap_or(self.playhead);
+        let old_track = old.first().and_then(|c| self.project.track_of_clip(*c));
+        let (clips, end, track) = self.edit(if replacing { "Change line" } else { "Place line" }, |p| {
+            for clip in &old {
+                p.remove_clip(*clip);
+            }
+            let track = old_track.unwrap_or_else(|| App::sentence_track(p));
             let mut clips = Vec::new();
             let mut cursor = at;
             for part in &plan {
@@ -819,8 +948,10 @@ impl App {
             self.snap_selection_pitch();
         }
         self.after_place(&clips, track);
-        self.toast_with(ToastKind::Good, format!("Placed {count} clip{}", if count == 1 { "" } else { "s" }), ToastAction::Undo);
+        let message = if replacing { "Changed the line".to_string() } else { format!("Placed {count} clip{}", if count == 1 { "" } else { "s" }) };
+        self.toast_with(ToastKind::Good, message, ToastAction::Undo);
         let line = self.say.text.trim().to_string();
+        self.say.last_line = Some(PlacedLine { text: line.clone(), plan, clips: clips.clone() });
         self.say.recent.retain(|l| *l != line);
         self.say.recent.insert(0, line);
         self.say.recent.truncate(RECENT_LINES);
@@ -1026,5 +1157,50 @@ impl App {
                 ui.add_space(SP_1);
             }
         });
+    }
+}
+
+/// Where each word of the input is, in characters. Words with no letters or numbers, such as a lone
+/// dash, aren't planned, so they're left out here too.
+fn word_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut start: Option<usize> = None;
+    let chars: Vec<char> = text.chars().collect();
+    for i in 0..=chars.len() {
+        let space = chars.get(i).is_none_or(|c| c.is_whitespace());
+        match (start, space) {
+            (None, false) => start = Some(i),
+            (Some(from), true) => {
+                if !normalize_word(&chars[from..i].iter().collect::<String>()).is_empty() {
+                    spans.push((from, i));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    spans
+}
+
+/// The words each part covers, when the parts cover the words in order.
+pub fn consecutive_words(plan: &[SentencePart]) -> Vec<std::ops::Range<usize>> {
+    let mut at = 0;
+    plan.iter()
+        .map(|part| {
+            let n = part.text.split_whitespace().count();
+            at += n;
+            at - n..at
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn words_are_found_in_characters_without_punctuation() {
+        assert_eq!(word_spans("héllo  big - world"), [(0, 5), (7, 10), (13, 18)]);
+        assert!(word_spans("   ").is_empty());
     }
 }

@@ -119,6 +119,7 @@ impl App {
         let Some(mut rewrite) = self.say.rewrite.take() else { return };
         let tokens: Vec<String> = self.say.text.split_whitespace().map(normalize_word).filter(|w| !w.is_empty()).collect();
         let mut plan: Vec<SentencePart> = Vec::new();
+        let mut part_words = Vec::new();
         rewrite.runs.clear();
         for change in sentence::diff_words(&rewrite.before_words, &tokens) {
             let mut parts = sentence::plan(&tokens[change.new.clone()].join(" "), &self.index);
@@ -130,10 +131,12 @@ impl App {
                 (rewrite.times[change.old.start].0, rewrite.times[change.old.end - 1].1)
             };
             let from = plan.len();
+            part_words.extend(crate::panels::say::consecutive_words(&parts).into_iter().map(|w| w.start + change.new.start..w.end + change.new.start));
             plan.extend(parts);
             rewrite.runs.push(RewriteRun { parts: from..plan.len(), start, end, old: change.old });
         }
         self.say.plan = plan;
+        self.say.part_words = part_words;
         self.say.rewrite = Some(rewrite);
         self.say.focus = self.say.focus.min(self.say.plan.len().saturating_sub(1));
     }
