@@ -82,15 +82,17 @@ pub fn meter(painter: &egui::Painter, rect: Rect, peaks: [f32; 2]) {
         } else {
             GOOD
         };
-        let bar = if vertical {
+        let (channel, bar) = if vertical {
             let w = (rect.width() - 1.0) * 0.5;
             let x = rect.left() + i as f32 * (w + 1.0);
-            Rect::from_min_max(egui::pos2(x, rect.bottom() - rect.height() * level), egui::pos2(x + w, rect.bottom()))
+            (Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w, rect.bottom())), Rect::from_min_max(egui::pos2(x, rect.bottom() - rect.height() * level), egui::pos2(x + w, rect.bottom())))
         } else {
             let h = (rect.height() - 1.0) * 0.5;
             let y = rect.top() + i as f32 * (h + 1.0);
-            Rect::from_min_max(egui::pos2(rect.left(), y), egui::pos2(rect.left() + rect.width() * level, y + h))
+            (Rect::from_min_max(egui::pos2(rect.left(), y), egui::pos2(rect.right(), y + h)), Rect::from_min_max(egui::pos2(rect.left(), y), egui::pos2(rect.left() + rect.width() * level, y + h)))
         };
+        // The unlit channel shows, so a silent meter still reads as a meter rather than a hole.
+        painter.rect_filled(channel, egui::CornerRadius::ZERO, CONTROL);
         if level > 0.0 {
             painter.rect_filled(bar, egui::CornerRadius::ZERO, color);
         }

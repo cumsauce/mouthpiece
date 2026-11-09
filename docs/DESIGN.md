@@ -100,9 +100,22 @@ underline and a sentence saying so.
 
 - **Surfaces** share one cool hue, 262, opposite the accent's 41, at a chroma too low to read as a colour.
   Their lightness rises in even steps.
-- **Tracks** are close in lightness and chroma, so that none shouts over another, and leave the hues around the
-  accent free, so that a track is never mistaken for the selection. They stay apart under simulated
-  deuteranopia and protanopia, which is why their lightness differs a little.
+- **Tracks, status, solo and mute are equally vibrant.** They share one OKLCH chroma, `CHROMA`, the most that
+  every hue in use can show, and one *apparent* lightness, `APPARENT_LIGHTNESS`. Equal OKLCH lightness isn't
+  enough: a saturated colour looks brighter than a grey of the same lightness, by an amount that depends on its
+  hue (the Helmholtz-Kohlrausch effect). So each colour's lightness is solved for, until Fairchild and Pirrotta's
+  model of that effect gives the target. Blues come out darker and yellows lighter, and none looks brighter or
+  more colourful than another. A test checks every one.
+- **Track hues sit on a decagon,** 36° apart from 70°. A song's stems and the Sentence track, which are usually
+  open together, take alternate corners, a pentad 72° apart, rotated to stay furthest apart under simulated
+  deuteranopia and protanopia. A second or third track of a kind takes a corner between. Of the two corners left,
+  one holds the accent, so a track is never mistaken for the selection, and the other is an olive that looks
+  muddy at this lightness. At one lightness only hue tells colours apart, so only the tracks open together are
+  promised to stay apart for colour-blind people. Track names do the rest.
+- **The accent breaks the rule on purpose.** It has far more chroma than anything else, which is what lets it
+  mean "selected" or "do this".
+- **Phonemes** follow the same rule, dark and quiet: chroma 0.05 at an apparent lightness of 37.5. Sounds that
+  ring are cool and sounds that are noise or a stop are warm.
 - **The spectrogram** rises evenly in lightness with level, like magma and inferno, and never falls, so that
   brightness can be read as loudness. A rainbow would show edges that aren't in the sound.
 - **Blends** go through `mix`, in OKLab, so that tints of a track colour stay clean.

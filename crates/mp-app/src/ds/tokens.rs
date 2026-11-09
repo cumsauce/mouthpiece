@@ -37,44 +37,66 @@ pub const TEXT_ON_ACCENT: Color32 = Color32::from_rgb(24, 12, 6);
 pub const ACCENT: Color32 = Color32::from_rgb(255, 122, 69);
 pub const ACCENT_HOVER: Color32 = Color32::from_rgb(255, 150, 111);
 pub const ACCENT_DIM: Color32 = Color32::from_rgb(88, 50, 36);
-/// oklch(.78 .14 155)
-pub const GOOD: Color32 = Color32::from_rgb(99, 209, 143);
-/// oklch(.82 .13 80)
-pub const WARN: Color32 = Color32::from_rgb(240, 186, 89);
-/// oklch(.69 .17 22)
-pub const BAD: Color32 = Color32::from_rgb(242, 105, 106);
-/// oklch(.86 .15 97)
-pub const SOLO: Color32 = Color32::from_rgb(237, 209, 77);
-/// oklch(.72 .13 258)
-pub const MUTE: Color32 = Color32::from_rgb(112, 166, 245);
+// ----- Every other colour has the same vibrancy: one chroma, and one lightness as it appears. -----
+//
+// Equal OKLCH lightness isn't enough, because a saturated colour looks brighter than a grey of the same lightness, by an
+// amount that depends on its hue (the Helmholtz-Kohlrausch effect). So each hue's lightness is solved for, until its
+// apparent lightness under Fairchild and Pirrotta's model is APPARENT_LIGHTNESS. Blues come out darker and yellows lighter,
+// and side by side none of them looks brighter or more colourful than another. The accent alone breaks the rule, as the
+// most colourful thing on screen. See "How the palette is built" in DESIGN.md.
 
-/// Similar in lightness and chroma, so that no track shouts over another, with the hues around the accent left free.
-/// The lightness differs where it keeps two hues apart for people who confuse them. Searched for rather than picked.
+/// The chroma every track and status colour shares: the most that every hue used can show at this lightness. Red sets
+/// the limit.
+const CHROMA: f32 = 0.120;
+/// Their lightness as it appears, in CIELAB L* units, Helmholtz-Kohlrausch effect included.
+const APPARENT_LIGHTNESS: f32 = 78.0;
+
+/// oklch(.761 .120 150)
+pub const GOOD: Color32 = Color32::from_rgb(118, 199, 136);
+/// oklch(.787 .120 78)
+pub const WARN: Color32 = Color32::from_rgb(228, 176, 90);
+/// oklch(.791 .120 25)
+pub const BAD: Color32 = Color32::from_rgb(255, 156, 148);
+/// oklch(.787 .120 92)
+pub const SOLO: Color32 = Color32::from_rgb(213, 183, 87);
+/// oklch(.760 .120 255)
+pub const MUTE: Color32 = Color32::from_rgb(124, 180, 252);
+
+/// Hues on a decagon, 36° apart from 70°. The tracks that are usually open together, a song's stems and the Sentence
+/// track, take alternate corners, a pentad, so that they're 72° apart. A second or third track of a kind takes a corner
+/// between. Of the two corners left, one is where the accent is, so no track is mistaken for the selection, and the
+/// other is an olive that looks muddy at this lightness. The pentad's rotation is the one that keeps it furthest apart
+/// under simulated deuteranopia and protanopia.
 const TRACK_COLORS: [Color32; 8] = [
-    Color32::from_rgb(245, 147, 140), // Coral, oklch(.765 .120 25)
-    Color32::from_rgb(70, 200, 181),  // Teal, oklch(.758 .116 181)
-    Color32::from_rgb(161, 138, 206), // Violet, oklch(.680 .100 299)
-    Color32::from_rgb(85, 162, 249),  // Blue, oklch(.703 .149 253)
-    Color32::from_rgb(239, 189, 79),  // Amber, oklch(.824 .138 84)
-    Color32::from_rgb(216, 114, 160), // Pink, oklch(.680 .138 353)
-    Color32::from_rgb(160, 221, 155), // Green, oklch(.839 .108 143)
-    Color32::from_rgb(103, 221, 250), // Sky, oklch(.840 .113 216)
+    Color32::from_rgb(248, 152, 185), // Vocal: rose, oklch(.788 .120 358)
+    Color32::from_rgb(235, 172, 94),  // Drums: amber, oklch(.788 .120 70)
+    Color32::from_rgb(171, 166, 251), // Bass: violet, oklch(.762 .120 286)
+    Color32::from_rgb(133, 198, 126), // Music: green, oklch(.764 .120 142)
+    Color32::from_rgb(67, 200, 176),  // A second music track: teal, oklch(.756 .120 178)
+    Color32::from_rgb(57, 196, 223),  // A second vocal, usually Sentence: sky, oklch(.759 .120 214)
+    Color32::from_rgb(115, 183, 251), // A second drum track: blue, oklch(.761 .120 250)
+    Color32::from_rgb(217, 155, 227), // A third music track: orchid, oklch(.774 .120 322)
 ];
+
+/// The tracks a song usually has open together: vocal, drums, bass, music, and Sentence.
+#[cfg(test)]
+const TRACKS_OPEN_TOGETHER: [usize; 5] = [0, 1, 2, 3, 5];
 
 pub fn track_color(index: u8) -> Color32 {
     TRACK_COLORS[index as usize % TRACK_COLORS.len()]
 }
 
-/// The colours phoneme blocks use, by broad sound class. All are at the same lightness, so white text reads on
-/// each and none stands out. Sounds that ring are cool, and sounds that are noise or a stop are warm.
-pub const PHONEME_VOWEL: Color32 = Color32::from_rgb(68, 75, 107);
-pub const PHONEME_GLIDE: Color32 = Color32::from_rgb(47, 82, 100);
-pub const PHONEME_NASAL: Color32 = Color32::from_rgb(50, 84, 84);
-pub const PHONEME_VOICED_FRICATIVE: Color32 = Color32::from_rgb(91, 73, 53);
-pub const PHONEME_FRICATIVE: Color32 = Color32::from_rgb(102, 68, 50);
-pub const PHONEME_VOICED_STOP: Color32 = Color32::from_rgb(91, 68, 92);
-pub const PHONEME_STOP: Color32 = Color32::from_rgb(100, 65, 81);
-pub const PHONEME_AFFRICATE: Color32 = Color32::from_rgb(104, 65, 66);
+/// The colours phoneme blocks use, by broad sound class. Built like the tracks, but dark and quiet: chroma 0.05 and an
+/// apparent lightness of 37.5, so white text reads on each and none stands out. Sounds that ring are cool, 36° apart,
+/// and sounds that are noise or a stop are warm, 28° apart.
+pub const PHONEME_VOWEL: Color32 = Color32::from_rgb(62, 73, 101); // oklch(.408 .05 268)
+pub const PHONEME_GLIDE: Color32 = Color32::from_rgb(45, 80, 98); // oklch(.413 .05 232)
+pub const PHONEME_NASAL: Color32 = Color32::from_rgb(38, 84, 84); // oklch(.413 .05 196)
+pub const PHONEME_VOICED_FRICATIVE: Color32 = Color32::from_rgb(98, 77, 50); // oklch(.435 .05 72)
+pub const PHONEME_FRICATIVE: Color32 = Color32::from_rgb(104, 72, 58); // oklch(.433 .05 44)
+pub const PHONEME_VOICED_STOP: Color32 = Color32::from_rgb(88, 67, 93); // oklch(.415 .05 320)
+pub const PHONEME_STOP: Color32 = Color32::from_rgb(99, 67, 83); // oklch(.424 .05 348)
+pub const PHONEME_AFFRICATE: Color32 = Color32::from_rgb(105, 69, 71); // oklch(.431 .05 16)
 
 /// The background the spectrogram fades into, which is its map at zero.
 pub const SPECTROGRAM_FLOOR: Color32 = Color32::from_rgb(14, 13, 28);
@@ -384,17 +406,61 @@ mod palette_tests {
         }
     }
 
+    /// CIELAB lightness, chroma and hue in degrees, for a D65 white.
+    fn cielab_lch(c: Color32) -> [f32; 3] {
+        let (r, g, b) = (to_linear(c.r()), to_linear(c.g()), to_linear(c.b()));
+        let x = (0.412_456_4 * r + 0.357_576_1 * g + 0.180_437_5 * b) / 0.950_47;
+        let y = 0.212_672_9 * r + 0.715_152_2 * g + 0.072_175 * b;
+        let z = (0.019_333_9 * r + 0.119_192 * g + 0.950_304_1 * b) / 1.088_83;
+        let f = |t: f32| if t > 216.0 / 24389.0 { t.cbrt() } else { (24389.0 / 27.0 * t + 16.0) / 116.0 };
+        let (a, b) = (500.0 * (f(x) - f(y)), 200.0 * (f(y) - f(z)));
+        [116.0 * f(y) - 16.0, a.hypot(b), b.atan2(a).to_degrees().rem_euclid(360.0)]
+    }
+
+    /// Lightness as it appears, counting the Helmholtz-Kohlrausch effect (Fairchild and Pirrotta, 1991).
+    fn apparent_lightness(c: Color32) -> f32 {
+        let [l, chroma, hue] = cielab_lch(c);
+        l + (2.5 - 0.025 * l) * (0.116 * ((hue - 90.0) / 2.0).to_radians().sin().abs() + 0.085) * chroma
+    }
+
+    fn oklch_chroma(c: Color32) -> f32 {
+        let [_, a, b] = to_oklab(c);
+        a.hypot(b)
+    }
+
+    #[test]
+    fn tracks_and_status_colours_are_equally_vibrant() {
+        for c in TRACK_COLORS.iter().chain(&[GOOD, WARN, BAD, SOLO, MUTE]) {
+            assert!((oklch_chroma(*c) - CHROMA).abs() < 0.004, "{c:?} has chroma {}", oklch_chroma(*c));
+            assert!((apparent_lightness(*c) - APPARENT_LIGHTNESS).abs() < 0.6, "{c:?} looks {} light", apparent_lightness(*c));
+        }
+        // The accent is the one colour allowed to stand out.
+        assert!(oklch_chroma(ACCENT) > CHROMA * 1.3);
+        let phonemes = [PHONEME_VOWEL, PHONEME_GLIDE, PHONEME_NASAL, PHONEME_VOICED_FRICATIVE, PHONEME_FRICATIVE, PHONEME_VOICED_STOP, PHONEME_STOP, PHONEME_AFFRICATE];
+        for c in phonemes {
+            assert!((oklch_chroma(c) - 0.05).abs() < 0.004 && (apparent_lightness(c) - 37.5).abs() < 0.6, "{c:?}");
+        }
+    }
+
     #[test]
     fn tracks_stay_apart_and_away_from_the_accent_even_with_colour_blindness() {
         const DEUTERANOPIA: [[f32; 3]; 3] = [[0.367_322, 0.860_646, -0.227_968], [0.280_085, 0.672_501, 0.047_413], [-0.011_82, 0.042_94, 0.968_881]];
         const PROTANOPIA: [[f32; 3]; 3] = [[0.152_286, 1.052_583, -0.204_868], [0.114_503, 0.786_281, 0.099_216], [-0.003_882, -0.048_116, 1.051_998]];
         for (i, &a) in TRACK_COLORS.iter().enumerate() {
-            assert!(distance(a, ACCENT) > 0.07, "{a:?}");
+            assert!(distance(a, ACCENT) > 0.1, "{a:?}");
             assert!(wcag_contrast(a, PANEL) > 4.5, "{a:?}");
             for &b in &TRACK_COLORS[i + 1..] {
-                assert!(distance(a, b) > 0.1, "{a:?} {b:?}");
+                assert!(distance(a, b) > 0.07, "{a:?} {b:?}");
+            }
+        }
+        // At one lightness, hue is all that tells colours apart, so only so many can be far apart. The tracks open
+        // together get the room, and names tell apart the rest.
+        for (n, &i) in TRACKS_OPEN_TOGETHER.iter().enumerate() {
+            for &j in &TRACKS_OPEN_TOGETHER[n + 1..] {
+                let (a, b) = (TRACK_COLORS[i], TRACK_COLORS[j]);
+                assert!(distance(a, b) > 0.135, "{a:?} {b:?}");
                 for matrix in [DEUTERANOPIA, PROTANOPIA] {
-                    assert!(distance(as_seen_with(matrix, a), as_seen_with(matrix, b)) > 0.06, "{a:?} {b:?}");
+                    assert!(distance(as_seen_with(matrix, a), as_seen_with(matrix, b)) > 0.04, "{a:?} {b:?}");
                 }
             }
         }
